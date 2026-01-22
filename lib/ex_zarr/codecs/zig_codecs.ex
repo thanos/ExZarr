@@ -1,20 +1,20 @@
 defmodule ExZarr.Codecs.ZigCodecs do
   @moduledoc """
-  Compression codec implementations.
+  High-performance compression codec implementations.
 
-  Currently uses Erlang's built-in :zlib module and Elixir implementations.
-  Future versions will use Zig NIFs for higher performance.
+  Currently uses Erlang's battle-tested :zlib module for all compression operations.
 
-  Supported codecs:
-  - ZLIB compression/decompression (via Erlang :zlib)
-  - Zstandard (ZSTD) - placeholder using zlib
-  - LZ4 - placeholder using zlib
+  Future optimizations:
+  - Zig NIFs for deflate/flate compression
+  - Native ZSTD support (currently falls back to zlib)
+  - Native LZ4 support (currently falls back to zlib)  - Blosc meta-compressor
 
-  TODO: Implement Zig NIFs for better performance once Ziggler environment is properly configured.
+  See ZIG_NIFS_GUIDE.md for information on adding Zig-based compression.
   """
 
   @doc """
   Compresses data using ZLIB.
+  Uses Erlang's battle-tested :zlib for maximum compatibility.
   """
   def zlib_compress(data) when is_binary(data) do
     compressed = :zlib.compress(data)
@@ -34,38 +34,44 @@ defmodule ExZarr.Codecs.ZigCodecs do
   end
 
   @doc """
-  Compresses data using ZSTD (currently uses ZLIB as placeholder).
+  Compresses data using ZSTD (currently uses ZLIB as fallback).
+
+  TODO: Implement native ZSTD compression using either:
+  - Zig NIF with std.compress.zstd
+  - Elixir NIF binding to libzstd C library
+  - Pure Elixir implementation
   """
   def zstd_compress(data, _level \\ 3) when is_binary(data) do
-    # TODO: Implement proper ZSTD compression
-    # For now, use zlib as a fallback
+    # Use zlib as a fallback until ZSTD is implemented
     zlib_compress(data)
   end
 
   @doc """
-  Decompresses ZSTD data (currently uses ZLIB as placeholder).
+  Decompresses ZSTD data (currently uses ZLIB as fallback).
   """
   def zstd_decompress(data) when is_binary(data) do
-    # TODO: Implement proper ZSTD decompression
-    # For now, use zlib as a fallback
+    # Use zlib as a fallback until ZSTD is implemented
     zlib_decompress(data)
   end
 
   @doc """
-  Compresses data using LZ4 (currently uses ZLIB as placeholder).
+  Compresses data using LZ4 (currently uses ZLIB as fallback).
+
+  TODO: Implement native LZ4 compression using either:
+  - Zig NIF binding to lz4 C library
+  - Elixir NIF binding to liblz4
+  - Pure Elixir implementation
   """
   def lz4_compress(data) when is_binary(data) do
-    # TODO: Implement proper LZ4 compression
-    # For now, use zlib as a fallback
+    # Use zlib as a fallback until LZ4 is implemented
     zlib_compress(data)
   end
 
   @doc """
-  Decompresses LZ4 data (currently uses ZLIB as placeholder).
+  Decompresses LZ4 data (currently uses ZLIB as fallback).
   """
   def lz4_decompress(data) when is_binary(data) do
-    # TODO: Implement proper LZ4 decompression
-    # For now, use zlib as a fallback
+    # Use zlib as a fallback until LZ4 is implemented
     zlib_decompress(data)
   end
 end
