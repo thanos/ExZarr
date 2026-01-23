@@ -233,11 +233,6 @@ defmodule ExZarr.Array do
 
   - `{:ok, binary}` containing the requested data in row-major order
   - `{:error, reason}` on failure
-
-  ## Note
-
-  Currently this function returns placeholder empty data as the slice
-  assembly implementation is in progress.
   """
   @spec get_slice(t(), keyword()) :: {:ok, binary()} | {:error, term()}
   def get_slice(array, opts) do
@@ -261,37 +256,46 @@ defmodule ExZarr.Array do
 
   - `array` - The array to write to
   - `data` - Binary data to write (must match region size and dtype)
-  - `opts` - Options including `:start` index
+  - `opts` - Options including `:start` and `:stop` indices
 
   ## Options
 
   - `:start` - Starting index for the write (default: all zeros)
+  - `:stop` - Stopping index for the write (required for correct multi-dimensional writes)
 
   ## Examples
 
-      # Write data to specific region
-      data = <<...>>  # Binary data
-      :ok = ExZarr.Array.set_slice(array, data, start: {100, 100})
+      # Write 10x10 block of data
+      data = <<...>>  # 100 int32 values = 400 bytes
+      :ok = ExZarr.Array.set_slice(array, data,
+        start: {0, 0},
+        stop: {10, 10}
+      )
 
-      # Write to beginning of array
-      :ok = ExZarr.Array.set_slice(array, data, start: {0, 0})
+      # Write to beginning of 1D array
+      data = <<...>>  # 100 int32 values
+      :ok = ExZarr.Array.set_slice(array, data, start: {0}, stop: {100})
 
   ## Returns
 
   - `:ok` on success
   - `{:error, reason}` on failure
-
-  ## Note
-
-  Currently this function returns placeholder success as the chunk splitting
-  and writing implementation is in progress.
   """
   @spec set_slice(t(), binary(), keyword()) :: :ok | {:error, term()}
   def set_slice(array, data, opts) do
     start = Keyword.get(opts, :start, tuple_of_zeros(array.shape))
+    stop = Keyword.get(opts, :stop)
 
-    with {:ok, chunk_indices} <- calculate_chunk_indices_for_write(array, data, start),
-         {:ok, chunks} <- split_into_chunks(array, data, start) do
+    # Calculate stop from data size if not provided (for 1D arrays)
+    stop =
+      if stop do
+        stop
+      else
+        calculate_stop_from_data(array, data, start)
+      end
+
+    with {:ok, chunk_indices} <- calculate_chunk_indices(array, start, stop),
+         {:ok, chunks} <- split_into_chunks(array, data, start, stop) do
       write_chunks(array, chunks, chunk_indices)
     end
   end
@@ -450,14 +454,33 @@ defmodule ExZarr.Array do
     |> List.to_tuple()
   end
 
-  defp calculate_chunk_indices(_array, _start, _stop) do
-    # TODO: Implement chunk index calculation
-    {:ok, []}
+  defp calculate_chunk_indices(array, start, stop) do
+    # Use Chunk module to find all chunks that overlap with this slice
+    chunk_indices = ExZarr.Chunk.slice_to_chunks(start, stop, array.chunks)
+    {:ok, chunk_indices}
   end
 
-  defp calculate_chunk_indices_for_write(_array, _data, _start) do
-    # TODO: Implement chunk index calculation for writes
-    {:ok, []}
+  defp calculate_stop_from_start_and_size(start, num_elements, shape) do
+    # For now, assume 1D writing (can be extended for multi-dimensional)
+    start_list = Tuple.to_list(start)
+    shape_list = Tuple.to_list(shape)
+
+    # Calculate how many elements fit in each dimension
+    {stop_list, _remaining} =
+      Enum.zip(start_list, shape_list)
+      |> Enum.reduce({[], num_elements}, fn {start_val, dim_size}, {acc, remaining} ->
+        available = dim_size - start_val
+        to_use = min(available, remaining)
+        {acc ++ [start_val + to_use], remaining - to_use}
+      end)
+
+    List.to_tuple(stop_list)
+  end
+
+  defp calculate_stop_from_data(array, data, start) do
+    element_size = dtype_size(array.dtype)
+    num_elements = Kernel.div(byte_size(data), element_size)
+    calculate_stop_from_start_and_size(start, num_elements, array.shape)
   end
 
   defp read_chunks(array, chunk_indices) do
@@ -500,14 +523,486 @@ defmodule ExZarr.Array do
     end
   end
 
-  defp split_into_chunks(_array, _data, _start) do
-    # TODO: Implement data splitting into chunks
-    {:ok, []}
+  defp split_into_chunks(array, data, start, stop) do
+    # Calculate which chunks are affected
+    element_size = dtype_size(array.dtype)
+
+    {:ok, chunk_indices} = calculate_chunk_indices(array, start, stop)
+
+    # For each affected chunk, prepare the data to write
+    chunks =
+      chunk_indices
+      |> Enum.map(fn chunk_index ->
+        # Get the bounds of this chunk in array coordinates
+        {chunk_start, chunk_stop} =
+          ExZarr.Chunk.chunk_bounds(chunk_index, array.chunks, array.shape)
+
+        # Calculate the overlap between the chunk and the write region
+        overlap_start = tuple_max(chunk_start, start)
+        overlap_stop = tuple_min(chunk_stop, stop)
+
+        # Create or read the existing chunk
+        existing_chunk =
+          case Storage.read_chunk(array.storage, chunk_index) do
+            {:ok, compressed} ->
+              case Codecs.decompress(compressed, array.compressor) do
+                {:ok, decompressed} -> decompressed
+                {:error, _} -> create_fill_chunk(array)
+              end
+
+            {:error, :not_found} ->
+              create_fill_chunk(array)
+          end
+
+        # Modify the chunk with new data
+        modified_chunk =
+          write_to_chunk(
+            existing_chunk,
+            data,
+            array.chunks,
+            chunk_start,
+            overlap_start,
+            overlap_stop,
+            start,
+            stop,
+            element_size
+          )
+
+        modified_chunk
+      end)
+
+    {:ok, chunks}
   end
 
-  defp assemble_slice(_array, _chunks, _start, _stop) do
-    # TODO: Implement slice assembly from chunks
-    {:ok, <<>>}
+  defp assemble_slice(array, chunks, start, stop) do
+    # Calculate the shape of the output slice
+    slice_shape =
+      Tuple.to_list(start)
+      |> Enum.zip(Tuple.to_list(stop))
+      |> Enum.map(fn {start_val, stop_val} -> stop_val - start_val end)
+      |> List.to_tuple()
+
+    slice_size =
+      slice_shape
+      |> Tuple.to_list()
+      |> Enum.reduce(1, &(&1 * &2))
+
+    element_size = dtype_size(array.dtype)
+    output_size = slice_size * element_size
+
+    # Initialize output buffer with fill values
+    output = :binary.copy(<<0>>, output_size)
+
+    # Get chunk indices that were read
+    {:ok, chunk_indices} = calculate_chunk_indices(array, start, stop)
+
+    # For each chunk, extract the relevant portion and place it in the output
+    output =
+      Enum.zip(chunks, chunk_indices)
+      |> Enum.reduce(output, fn {chunk_data, chunk_index}, acc ->
+        # Get the bounds of this chunk
+        {chunk_start, chunk_stop} =
+          ExZarr.Chunk.chunk_bounds(chunk_index, array.chunks, array.shape)
+
+        # Calculate overlap between chunk and requested slice
+        overlap_start = tuple_max(chunk_start, start)
+        overlap_stop = tuple_min(chunk_stop, stop)
+
+        # Extract data from chunk and place in output
+        extract_and_place_chunk_data(
+          acc,
+          chunk_data,
+          array.chunks,
+          slice_shape,
+          chunk_start,
+          overlap_start,
+          overlap_stop,
+          start,
+          element_size
+        )
+      end)
+
+    {:ok, output}
+  end
+
+  defp extract_and_place_chunk_data(
+         output,
+         chunk_data,
+         chunk_shape,
+         slice_shape,
+         chunk_start,
+         overlap_start,
+         overlap_stop,
+         slice_start,
+         element_size
+       ) do
+    # For simplicity, handle common cases (1D, 2D)
+    case tuple_size(chunk_shape) do
+      1 ->
+        extract_1d(
+          output,
+          chunk_data,
+          chunk_shape,
+          slice_shape,
+          chunk_start,
+          overlap_start,
+          overlap_stop,
+          slice_start,
+          element_size
+        )
+
+      2 ->
+        extract_2d(
+          output,
+          chunk_data,
+          chunk_shape,
+          slice_shape,
+          chunk_start,
+          overlap_start,
+          overlap_stop,
+          slice_start,
+          element_size
+        )
+
+      _ ->
+        # For higher dimensions, fall back to element-by-element copy
+        extract_nd(
+          output,
+          chunk_data,
+          chunk_shape,
+          slice_shape,
+          chunk_start,
+          overlap_start,
+          overlap_stop,
+          slice_start,
+          element_size
+        )
+    end
+  end
+
+  defp extract_1d(
+         output,
+         chunk_data,
+         _chunk_shape,
+         _slice_shape,
+         {chunk_start},
+         {overlap_start},
+         {overlap_stop},
+         {slice_start},
+         element_size
+       ) do
+    # Calculate positions
+    chunk_offset = (overlap_start - chunk_start) * element_size
+    output_offset = (overlap_start - slice_start) * element_size
+    length = (overlap_stop - overlap_start) * element_size
+
+    # Extract from chunk
+    <<_::binary-size(chunk_offset), data::binary-size(length), _::binary>> = chunk_data
+
+    # Place in output
+    <<before::binary-size(output_offset), _::binary-size(length), after_part::binary>> = output
+    <<before::binary, data::binary, after_part::binary>>
+  end
+
+  defp extract_2d(
+         output,
+         chunk_data,
+         {_chunk_h, chunk_w},
+         {_slice_h, slice_w},
+         {chunk_start_y, chunk_start_x},
+         {overlap_start_y, overlap_start_x},
+         {overlap_stop_y, overlap_stop_x},
+         {slice_start_y, slice_start_x},
+         element_size
+       ) do
+    # Copy row by row
+    Enum.reduce((overlap_start_y)..(overlap_stop_y - 1), output, fn y, acc ->
+      # Position in chunk
+      chunk_row = y - chunk_start_y
+      chunk_offset = (chunk_row * chunk_w + (overlap_start_x - chunk_start_x)) * element_size
+      row_length = (overlap_stop_x - overlap_start_x) * element_size
+
+      # Extract row from chunk
+      <<_::binary-size(chunk_offset), row_data::binary-size(row_length), _::binary>> =
+        chunk_data
+
+      # Position in output
+      output_row = y - slice_start_y
+      output_offset = (output_row * slice_w + (overlap_start_x - slice_start_x)) * element_size
+
+      # Place row in output
+      <<before::binary-size(output_offset), _::binary-size(row_length), after_part::binary>> =
+        acc
+
+      <<before::binary, row_data::binary, after_part::binary>>
+    end)
+  end
+
+  defp extract_nd(
+         output,
+         chunk_data,
+         chunk_shape,
+         slice_shape,
+         chunk_start,
+         overlap_start,
+         overlap_stop,
+         slice_start,
+         element_size
+       ) do
+    # Generate all indices in the overlap region
+    overlap_ranges =
+      Tuple.to_list(overlap_start)
+      |> Enum.zip(Tuple.to_list(overlap_stop))
+      |> Enum.map(fn {start, stop} -> start..(stop - 1) end)
+
+    # Get strides for chunk and slice
+    chunk_strides = ExZarr.Chunk.calculate_strides(chunk_shape)
+    slice_strides = ExZarr.Chunk.calculate_strides(slice_shape)
+
+    # Copy element by element
+    indices = cartesian_product(overlap_ranges)
+
+    Enum.reduce(indices, output, fn index_list, acc ->
+      index = List.to_tuple(index_list)
+
+      # Calculate offset in chunk
+      chunk_offset =
+        Tuple.to_list(index)
+        |> Enum.zip(Tuple.to_list(chunk_start))
+        |> Enum.zip(Tuple.to_list(chunk_strides))
+        |> Enum.reduce(0, fn {{idx, start}, stride}, offset ->
+          offset + (idx - start) * stride
+        end)
+
+      chunk_byte_offset = chunk_offset * element_size
+
+      # Extract element from chunk
+      <<_::binary-size(chunk_byte_offset), element::binary-size(element_size), _::binary>> =
+        chunk_data
+
+      # Calculate offset in output
+      output_offset =
+        Tuple.to_list(index)
+        |> Enum.zip(Tuple.to_list(slice_start))
+        |> Enum.zip(Tuple.to_list(slice_strides))
+        |> Enum.reduce(0, fn {{idx, start}, stride}, offset ->
+          offset + (idx - start) * stride
+        end)
+
+      output_byte_offset = output_offset * element_size
+
+      # Place element in output
+      <<before::binary-size(output_byte_offset), _::binary-size(element_size),
+        after_part::binary>> = acc
+
+      <<before::binary, element::binary, after_part::binary>>
+    end)
+  end
+
+  defp write_to_chunk(
+         chunk_data,
+         input_data,
+         chunk_shape,
+         chunk_start,
+         overlap_start,
+         overlap_stop,
+         write_start,
+         write_stop,
+         element_size
+       ) do
+    # Similar to extract but in reverse - write input data into chunk
+    case tuple_size(chunk_shape) do
+      1 ->
+        write_1d(
+          chunk_data,
+          input_data,
+          chunk_shape,
+          chunk_start,
+          overlap_start,
+          overlap_stop,
+          write_start,
+          element_size
+        )
+
+      2 ->
+        write_2d(
+          chunk_data,
+          input_data,
+          chunk_shape,
+          chunk_start,
+          overlap_start,
+          overlap_stop,
+          write_start,
+          write_stop,
+          element_size
+        )
+
+      _ ->
+        # Higher dimensions - element by element
+        write_nd(
+          chunk_data,
+          input_data,
+          chunk_shape,
+          chunk_start,
+          overlap_start,
+          overlap_stop,
+          write_start,
+          write_stop,
+          element_size
+        )
+    end
+  end
+
+  defp write_1d(
+         chunk_data,
+         input_data,
+         _chunk_shape,
+         {chunk_start},
+         {overlap_start},
+         {overlap_stop},
+         {write_start},
+         element_size
+       ) do
+    chunk_offset = (overlap_start - chunk_start) * element_size
+    input_offset = (overlap_start - write_start) * element_size
+    length = (overlap_stop - overlap_start) * element_size
+
+    # Extract data from input
+    <<_::binary-size(input_offset), data::binary-size(length), _::binary>> = input_data
+
+    # Write to chunk
+    <<before::binary-size(chunk_offset), _::binary-size(length), after_part::binary>> =
+      chunk_data
+
+    <<before::binary, data::binary, after_part::binary>>
+  end
+
+  defp write_2d(
+         chunk_data,
+         input_data,
+         {_chunk_h, chunk_w},
+         {chunk_start_y, chunk_start_x},
+         {overlap_start_y, overlap_start_x},
+         {overlap_stop_y, overlap_stop_x},
+         {write_start_y, write_start_x},
+         {_write_stop_y, write_stop_x},
+         element_size
+       ) do
+    # Calculate input width from the full write region
+    input_w = write_stop_x - write_start_x
+
+    # Write row by row
+    Enum.reduce((overlap_start_y)..(overlap_stop_y - 1), chunk_data, fn y, acc ->
+      # Position in input
+      input_row = y - write_start_y
+      input_offset = (input_row * input_w + (overlap_start_x - write_start_x)) * element_size
+      row_length = (overlap_stop_x - overlap_start_x) * element_size
+
+      # Extract row from input
+      <<_::binary-size(input_offset), row_data::binary-size(row_length), _::binary>> =
+        input_data
+
+      # Position in chunk
+      chunk_row = y - chunk_start_y
+      chunk_offset = (chunk_row * chunk_w + (overlap_start_x - chunk_start_x)) * element_size
+
+      # Write row to chunk
+      <<before::binary-size(chunk_offset), _::binary-size(row_length), after_part::binary>> = acc
+      <<before::binary, row_data::binary, after_part::binary>>
+    end)
+  end
+
+  defp write_nd(
+         chunk_data,
+         input_data,
+         chunk_shape,
+         chunk_start,
+         overlap_start,
+         overlap_stop,
+         write_start,
+         write_stop,
+         element_size
+       ) do
+    # Calculate strides for both chunk and input
+    chunk_strides = ExZarr.Chunk.calculate_strides(chunk_shape)
+
+    input_shape =
+      Tuple.to_list(write_start)
+      |> Enum.zip(Tuple.to_list(write_stop))
+      |> Enum.map(fn {start, stop} -> stop - start end)
+      |> List.to_tuple()
+
+    input_strides = ExZarr.Chunk.calculate_strides(input_shape)
+
+    # Create ranges for each dimension in the overlap region
+    overlap_ranges =
+      Tuple.to_list(overlap_start)
+      |> Enum.zip(Tuple.to_list(overlap_stop))
+      |> Enum.map(fn {start, stop} -> start..(stop - 1) end)
+
+    # Iterate through all indices in the overlap
+    indices = cartesian_product(overlap_ranges)
+
+    Enum.reduce(indices, chunk_data, fn index_list, acc ->
+      index = List.to_tuple(index_list)
+
+      # Calculate offset in input data
+      input_offset =
+        Tuple.to_list(index)
+        |> Enum.zip(Tuple.to_list(write_start))
+        |> Enum.zip(Tuple.to_list(input_strides))
+        |> Enum.reduce(0, fn {{idx, start}, stride}, offset ->
+          offset + (idx - start) * stride
+        end)
+
+      input_byte_offset = input_offset * element_size
+
+      # Extract element from input
+      <<_::binary-size(input_byte_offset), element::binary-size(element_size), _::binary>> =
+        input_data
+
+      # Calculate offset in chunk
+      chunk_offset =
+        Tuple.to_list(index)
+        |> Enum.zip(Tuple.to_list(chunk_start))
+        |> Enum.zip(Tuple.to_list(chunk_strides))
+        |> Enum.reduce(0, fn {{idx, start}, stride}, offset ->
+          offset + (idx - start) * stride
+        end)
+
+      chunk_byte_offset = chunk_offset * element_size
+
+      # Write element to chunk
+      <<before::binary-size(chunk_byte_offset), _::binary-size(element_size),
+        after_part::binary>> = acc
+
+      <<before::binary, element::binary, after_part::binary>>
+    end)
+  end
+
+  # Helper functions
+  defp tuple_max(t1, t2) do
+    Tuple.to_list(t1)
+    |> Enum.zip(Tuple.to_list(t2))
+    |> Enum.map(fn {a, b} -> max(a, b) end)
+    |> List.to_tuple()
+  end
+
+  defp tuple_min(t1, t2) do
+    Tuple.to_list(t1)
+    |> Enum.zip(Tuple.to_list(t2))
+    |> Enum.map(fn {a, b} -> min(a, b) end)
+    |> List.to_tuple()
+  end
+
+  defp cartesian_product([]), do: [[]]
+
+  defp cartesian_product([range | rest]) do
+    rest_product = cartesian_product(rest)
+
+    for x <- range, rest_item <- rest_product do
+      [x | rest_item]
+    end
   end
 
   defp create_fill_chunk(array) do

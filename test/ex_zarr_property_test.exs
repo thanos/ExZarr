@@ -350,8 +350,8 @@ defmodule ExZarr.PropertyTest do
                 data <- binary(min_length: 1, max_length: 1000) do
         {:ok, storage} = Storage.init(%{storage_type: :memory})
 
-        {:ok, updated_storage} = Storage.write_chunk(storage, chunk_index, data)
-        assert {:ok, ^data} = Storage.read_chunk(updated_storage, chunk_index)
+        :ok = Storage.write_chunk(storage, chunk_index, data)
+        assert {:ok, ^data} = Storage.read_chunk(storage, chunk_index)
       end
     end
 
@@ -384,8 +384,8 @@ defmodule ExZarr.PropertyTest do
         }
 
         {:ok, storage} = Storage.init(%{storage_type: :memory})
-        {:ok, updated_storage} = Storage.write_metadata(storage, original_metadata, [])
-        {:ok, read_metadata} = Storage.read_metadata(updated_storage)
+        :ok = Storage.write_metadata(storage, original_metadata, [])
+        {:ok, read_metadata} = Storage.read_metadata(storage)
 
         assert read_metadata.shape == original_metadata.shape
         assert read_metadata.chunks == original_metadata.chunks
