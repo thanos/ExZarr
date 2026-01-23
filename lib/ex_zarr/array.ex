@@ -239,7 +239,8 @@ defmodule ExZarr.Array do
     start = Keyword.get(opts, :start, tuple_of_zeros(array.shape))
     stop = Keyword.get(opts, :stop, array.shape)
 
-    with {:ok, chunk_indices} <- calculate_chunk_indices(array, start, stop),
+    with :ok <- validate_indices(start, stop, array.shape),
+         {:ok, chunk_indices} <- calculate_chunk_indices(array, start, stop),
          {:ok, chunks} <- read_chunks(array, chunk_indices) do
       assemble_slice(array, chunks, start, stop)
     end
@@ -283,20 +284,27 @@ defmodule ExZarr.Array do
   """
   @spec set_slice(t(), binary(), keyword()) :: :ok | {:error, term()}
   def set_slice(array, data, opts) do
-    start = Keyword.get(opts, :start, tuple_of_zeros(array.shape))
-    stop = Keyword.get(opts, :stop)
+    # Validate that data is binary
+    if not is_binary(data) do
+      {:error, {:invalid_data, "data must be binary, got: #{inspect(data)}"}}
+    else
+      start = Keyword.get(opts, :start, tuple_of_zeros(array.shape))
+      stop = Keyword.get(opts, :stop)
 
-    # Calculate stop from data size if not provided (for 1D arrays)
-    stop =
-      if stop do
-        stop
-      else
-        calculate_stop_from_data(array, data, start)
+      # Calculate stop from data size if not provided (for 1D arrays)
+      stop =
+        if stop do
+          stop
+        else
+          calculate_stop_from_data(array, data, start)
+        end
+
+      with :ok <- validate_indices(start, stop, array.shape),
+           :ok <- validate_write_data_size(data, start, stop, array.dtype),
+           {:ok, chunk_indices} <- calculate_chunk_indices(array, start, stop),
+           {:ok, chunks} <- split_into_chunks(array, data, start, stop) do
+        write_chunks(array, chunks, chunk_indices)
       end
-
-    with {:ok, chunk_indices} <- calculate_chunk_indices(array, start, stop),
-         {:ok, chunks} <- split_into_chunks(array, data, start, stop) do
-      write_chunks(array, chunks, chunk_indices)
     end
   end
 
@@ -1002,6 +1010,128 @@ defmodule ExZarr.Array do
 
     for x <- range, rest_item <- rest_product do
       [x | rest_item]
+    end
+  end
+
+  # Index validation functions
+
+  defp validate_indices(start, stop, shape) do
+    with :ok <- validate_tuple(start, "start"),
+         :ok <- validate_tuple(stop, "stop"),
+         :ok <- validate_dimensionality(start, stop, shape),
+         :ok <- validate_non_negative(start, "start"),
+         :ok <- validate_non_negative(stop, "stop"),
+         :ok <- validate_start_less_than_stop(start, stop),
+         :ok <- validate_within_bounds(stop, shape) do
+      :ok
+    end
+  end
+
+  defp validate_tuple(value, name) do
+    if is_tuple(value) do
+      :ok
+    else
+      {:error, {:invalid_index, "#{name} must be a tuple, got: #{inspect(value)}"}}
+    end
+  end
+
+  defp validate_dimensionality(start, stop, shape) do
+    ndim = tuple_size(shape)
+    start_dim = tuple_size(start)
+    stop_dim = tuple_size(stop)
+
+    cond do
+      start_dim != ndim ->
+        {:error,
+         {:dimension_mismatch,
+          "start has #{start_dim} dimensions but array has #{ndim} dimensions"}}
+
+      stop_dim != ndim ->
+        {:error,
+         {:dimension_mismatch,
+          "stop has #{stop_dim} dimensions but array has #{ndim} dimensions"}}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp validate_non_negative(indices, name) do
+    indices_list = Tuple.to_list(indices)
+
+    if Enum.all?(indices_list, &(is_integer(&1) and &1 >= 0)) do
+      :ok
+    else
+      negative = Enum.find(indices_list, &(not is_integer(&1) or &1 < 0))
+
+      {:error,
+       {:invalid_index, "#{name} indices must be non-negative integers, found: #{inspect(negative)}"}}
+    end
+  end
+
+  defp validate_start_less_than_stop(start, stop) do
+    violations =
+      Tuple.to_list(start)
+      |> Enum.zip(Tuple.to_list(stop))
+      |> Enum.with_index()
+      |> Enum.filter(fn {{s, e}, _idx} -> s > e end)
+
+    if Enum.empty?(violations) do
+      :ok
+    else
+      {{start_val, stop_val}, dim} = hd(violations)
+
+      {:error,
+       {:invalid_range,
+        "start must be <= stop in all dimensions. Dimension #{dim}: start=#{start_val}, stop=#{stop_val}"}}
+    end
+  end
+
+  defp validate_within_bounds(stop, shape) do
+    violations =
+      Tuple.to_list(stop)
+      |> Enum.zip(Tuple.to_list(shape))
+      |> Enum.with_index()
+      |> Enum.filter(fn {{idx, bound}, _dim} -> idx > bound end)
+
+    if Enum.empty?(violations) do
+      :ok
+    else
+      {{idx, bound}, dim} = hd(violations)
+
+      {:error,
+       {:out_of_bounds,
+        "Index out of bounds in dimension #{dim}: stop=#{idx} exceeds shape=#{bound}"}}
+    end
+  end
+
+  defp validate_write_data_size(data, start, stop, dtype) do
+    element_size = dtype_size(dtype)
+    data_size = byte_size(data)
+
+    expected_elements =
+      Tuple.to_list(start)
+      |> Enum.zip(Tuple.to_list(stop))
+      |> Enum.map(fn {s, e} -> e - s end)
+      |> Enum.reduce(1, &(&1 * &2))
+
+    expected_bytes = expected_elements * element_size
+
+    cond do
+      rem(data_size, element_size) != 0 ->
+        {:error,
+         {:data_size_mismatch,
+          "Data size (#{data_size} bytes) is not a multiple of element size (#{element_size} bytes)"}}
+
+      data_size != expected_bytes ->
+        num_elements = Kernel.div(data_size, element_size)
+
+        {:error,
+         {:data_size_mismatch,
+          "Data size mismatch: expected #{expected_elements} elements (#{expected_bytes} bytes), got #{num_elements} elements (#{data_size} bytes)"}}
+
+      true ->
+        :ok
     end
   end
 
