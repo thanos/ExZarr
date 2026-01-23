@@ -91,7 +91,13 @@ defmodule ExZarr.MixProject do
   defp docs do
     [
       main: "ExZarr",
-      extras: ["README.md"],
+      extras: [
+        "README.md",
+        "INTEROPERABILITY.md"
+      ],
+      groups_for_extras: [
+        "Guides": ~r/INTEROPERABILITY/
+      ],
       source_ref: "v#{@version}",
       source_url: @source_url
     ]

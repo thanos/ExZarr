@@ -3,21 +3,63 @@ defmodule ExZarr.Group do
   Hierarchical groups for organizing Zarr arrays.
 
   Groups allow you to organize multiple arrays in a hierarchical structure,
-  similar to directories in a filesystem or groups in HDF5.
+  similar to directories in a filesystem or groups in HDF5. This is useful
+  for managing related datasets together.
 
-  ## Example
+  ## Group Structure
+
+  A group contains:
+  - **Arrays**: Named arrays stored within the group
+  - **Subgroups**: Nested groups for hierarchical organization
+  - **Attributes**: Metadata key-value pairs
+  - **Storage**: Backend storage (shared with child arrays)
+
+  ## Filesystem Layout
+
+  Groups are represented on disk as directories with `.zgroup` files:
+
+      /data/
+        .zgroup              # Group metadata
+        measurements/
+          .zarray            # Array metadata
+          0.0, 0.1, ...      # Array chunks
+        experiments/
+          .zgroup            # Subgroup metadata
+          results/
+            .zarray
+            0.0, 0.1, ...
+
+  ## Examples
 
       # Create a root group
-      {:ok, root} = ExZarr.Group.create("/data")
-
-      # Create a subgroup
-      {:ok, subgroup} = ExZarr.Group.create_group(root, "experiments")
-
-      # Create an array in the group
-      {:ok, array} = ExZarr.Group.create_array(subgroup, "results",
-        shape: {100, 100},
-        chunks: {10, 10}
+      {:ok, root} = ExZarr.Group.create("/data",
+        storage: :filesystem,
+        path: "/tmp/zarr_data"
       )
+
+      # Create arrays in the group
+      {:ok, temp} = ExZarr.Group.create_array(root, "temperature",
+        shape: {1000, 1000},
+        chunks: {100, 100},
+        dtype: :float32
+      )
+
+      {:ok, pressure} = ExZarr.Group.create_array(root, "pressure",
+        shape: {1000, 1000},
+        chunks: {100, 100},
+        dtype: :float32
+      )
+
+      # Create subgroups for organization
+      {:ok, exp1} = ExZarr.Group.create_group(root, "experiment_1")
+      {:ok, results} = ExZarr.Group.create_array(exp1, "results",
+        shape: {500, 500},
+        chunks: {50, 50}
+      )
+
+      # Add metadata to groups
+      root = ExZarr.Group.set_attr(root, "description", "Sensor data collection")
+      root = ExZarr.Group.set_attr(root, "version", "1.0")
   """
 
   alias ExZarr.{Array, Storage}
