@@ -79,7 +79,7 @@ defmodule ExZarr.Codecs do
   @doc """
   Returns the list of available codecs.
   """
-  @spec available_codecs() :: [codec()]
+  @spec available_codecs() :: [codec(), ...]
   def available_codecs do
     [:none, :zlib, :zstd, :lz4]
   end
