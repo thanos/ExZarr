@@ -421,6 +421,7 @@ defmodule ExZarr.Array do
         dtype: Keyword.get(opts, :dtype, :float64),
         compressor: Keyword.get(opts, :compressor, :zstd),
         fill_value: Keyword.get(opts, :fill_value, 0),
+        filters: Keyword.get(opts, :filters, nil),
         storage_type: Keyword.get(opts, :storage, :memory),
         path: opts[:path]
       }
@@ -497,7 +498,11 @@ defmodule ExZarr.Array do
       |> Enum.map(fn index ->
         case Storage.read_chunk(array.storage, index) do
           {:ok, compressed_data} ->
-            Codecs.decompress(compressed_data, array.compressor)
+            # Decompress, then apply filters in REVERSE order
+            with {:ok, decompressed} <- Codecs.decompress(compressed_data, array.compressor),
+                 {:ok, unfiltered} <- apply_filters_decode(decompressed, array.metadata.filters) do
+              {:ok, unfiltered}
+            end
 
           {:error, :not_found} ->
             {:ok, create_fill_chunk(array)}
@@ -519,7 +524,9 @@ defmodule ExZarr.Array do
     results =
       Enum.zip(chunks, indices)
       |> Enum.map(fn {chunk_data, index} ->
-        with {:ok, compressed} <- Codecs.compress(chunk_data, array.compressor) do
+        # Apply filters in FORWARD order, then compress
+        with {:ok, filtered} <- apply_filters_encode(chunk_data, array.metadata.filters),
+             {:ok, compressed} <- Codecs.compress(filtered, array.compressor) do
           Storage.write_chunk(array.storage, index, compressed)
         end
       end)
@@ -1178,4 +1185,427 @@ defmodule ExZarr.Array do
   defp dtype_size(:uint64), do: 8
   defp dtype_size(:float32), do: 4
   defp dtype_size(:float64), do: 8
+
+  # Filter pipeline helpers
+
+  defp apply_filters_decode(data, nil), do: {:ok, data}
+  defp apply_filters_decode(data, []), do: {:ok, data}
+
+  defp apply_filters_decode(data, filters) when is_list(filters) do
+    # Reverse order for decoding
+    filters
+    |> Enum.reverse()
+    |> Enum.reduce_while({:ok, data}, fn {filter_id, opts}, {:ok, acc_data} ->
+      case ExZarr.Codecs.Registry.get(filter_id) do
+        {:ok, :builtin_delta} ->
+          case decode_builtin_filter(acc_data, :delta, opts) do
+            {:ok, decoded} -> {:cont, {:ok, decoded}}
+            error -> {:halt, error}
+          end
+
+        {:ok, :builtin_quantize} ->
+          case decode_builtin_filter(acc_data, :quantize, opts) do
+            {:ok, decoded} -> {:cont, {:ok, decoded}}
+            error -> {:halt, error}
+          end
+
+        {:ok, :builtin_shuffle} ->
+          case decode_builtin_filter(acc_data, :shuffle, opts) do
+            {:ok, decoded} -> {:cont, {:ok, decoded}}
+            error -> {:halt, error}
+          end
+
+        {:ok, :builtin_fixedscaleoffset} ->
+          case decode_builtin_filter(acc_data, :fixedscaleoffset, opts) do
+            {:ok, decoded} -> {:cont, {:ok, decoded}}
+            error -> {:halt, error}
+          end
+
+        {:ok, :builtin_astype} ->
+          case decode_builtin_filter(acc_data, :astype, opts) do
+            {:ok, decoded} -> {:cont, {:ok, decoded}}
+            error -> {:halt, error}
+          end
+
+        {:ok, :builtin_packbits} ->
+          case decode_builtin_filter(acc_data, :packbits, opts) do
+            {:ok, decoded} -> {:cont, {:ok, decoded}}
+            error -> {:halt, error}
+          end
+
+        {:ok, :builtin_categorize} ->
+          case decode_builtin_filter(acc_data, :categorize, opts) do
+            {:ok, decoded} -> {:cont, {:ok, decoded}}
+            error -> {:halt, error}
+          end
+
+        {:ok, :builtin_bitround} ->
+          case decode_builtin_filter(acc_data, :bitround, opts) do
+            {:ok, decoded} -> {:cont, {:ok, decoded}}
+            error -> {:halt, error}
+          end
+
+        {:ok, module} when is_atom(module) ->
+          # Custom filter
+          case module.decode(acc_data, opts) do
+            {:ok, decoded} -> {:cont, {:ok, decoded}}
+            error -> {:halt, error}
+          end
+
+        {:error, :not_found} ->
+          # Unknown filter - skip with warning
+          require Logger
+          Logger.warning("Unknown filter #{filter_id}, skipping during decode")
+          {:cont, {:ok, acc_data}}
+      end
+    end)
+  end
+
+  defp apply_filters_encode(data, nil), do: {:ok, data}
+  defp apply_filters_encode(data, []), do: {:ok, data}
+
+  defp apply_filters_encode(data, filters) when is_list(filters) do
+    # Forward order for encoding
+    Enum.reduce_while(filters, {:ok, data}, fn {filter_id, opts}, {:ok, acc_data} ->
+      case ExZarr.Codecs.Registry.get(filter_id) do
+        {:ok, :builtin_delta} ->
+          case encode_builtin_filter(acc_data, :delta, opts) do
+            {:ok, encoded} -> {:cont, {:ok, encoded}}
+            error -> {:halt, error}
+          end
+
+        {:ok, :builtin_quantize} ->
+          case encode_builtin_filter(acc_data, :quantize, opts) do
+            {:ok, encoded} -> {:cont, {:ok, encoded}}
+            error -> {:halt, error}
+          end
+
+        {:ok, :builtin_shuffle} ->
+          case encode_builtin_filter(acc_data, :shuffle, opts) do
+            {:ok, encoded} -> {:cont, {:ok, encoded}}
+            error -> {:halt, error}
+          end
+
+        {:ok, :builtin_fixedscaleoffset} ->
+          case encode_builtin_filter(acc_data, :fixedscaleoffset, opts) do
+            {:ok, encoded} -> {:cont, {:ok, encoded}}
+            error -> {:halt, error}
+          end
+
+        {:ok, :builtin_astype} ->
+          case encode_builtin_filter(acc_data, :astype, opts) do
+            {:ok, encoded} -> {:cont, {:ok, encoded}}
+            error -> {:halt, error}
+          end
+
+        {:ok, :builtin_packbits} ->
+          case encode_builtin_filter(acc_data, :packbits, opts) do
+            {:ok, encoded} -> {:cont, {:ok, encoded}}
+            error -> {:halt, error}
+          end
+
+        {:ok, :builtin_categorize} ->
+          case encode_builtin_filter(acc_data, :categorize, opts) do
+            {:ok, encoded} -> {:cont, {:ok, encoded}}
+            error -> {:halt, error}
+          end
+
+        {:ok, :builtin_bitround} ->
+          case encode_builtin_filter(acc_data, :bitround, opts) do
+            {:ok, encoded} -> {:cont, {:ok, encoded}}
+            error -> {:halt, error}
+          end
+
+        {:ok, module} when is_atom(module) ->
+          # Custom filter
+          case module.encode(acc_data, opts) do
+            {:ok, encoded} -> {:cont, {:ok, encoded}}
+            error -> {:halt, error}
+          end
+
+        {:error, :not_found} ->
+          # Unknown filter - skip with warning
+          require Logger
+          Logger.warning("Unknown filter #{filter_id}, skipping during encode")
+          {:cont, {:ok, acc_data}}
+      end
+    end)
+  end
+
+  # Built-in filter implementations
+
+  # Delta filter: encodes data as differences between adjacent values
+  defp encode_builtin_filter(data, :delta, opts) when is_binary(data) do
+    dtype = Keyword.fetch!(opts, :dtype)
+    astype = Keyword.get(opts, :astype, dtype)
+
+    try do
+      # Convert binary to list of values
+      values = binary_to_values(data, dtype)
+
+      # Compute deltas: [first, diff1, diff2, ...]
+      deltas =
+        case values do
+          [] ->
+            []
+
+          [first | rest] ->
+            {_, result} =
+              Enum.reduce(rest, {first, [first]}, fn current, {previous, acc} ->
+                diff = current - previous
+                {current, [diff | acc]}
+              end)
+
+            Enum.reverse(result)
+        end
+
+      # Convert back to binary with astype
+      encoded = values_to_binary(deltas, astype)
+      {:ok, encoded}
+    rescue
+      e -> {:error, {:delta_encode_failed, e}}
+    end
+  end
+
+  defp decode_builtin_filter(data, :delta, opts) when is_binary(data) do
+    dtype = Keyword.fetch!(opts, :dtype)
+
+    try do
+      # Convert binary to list of deltas
+      deltas = binary_to_values(data, dtype)
+
+      # Reconstruct values by computing cumulative sum
+      values =
+        case deltas do
+          [] ->
+            []
+
+          [first | rest] ->
+            {_, result} =
+              Enum.reduce(rest, {first, [first]}, fn diff, {previous, acc} ->
+                current = previous + diff
+                {current, [current | acc]}
+              end)
+
+            Enum.reverse(result)
+        end
+
+      # Convert back to binary
+      decoded = values_to_binary(values, dtype)
+      {:ok, decoded}
+    rescue
+      e -> {:error, {:delta_decode_failed, e}}
+    end
+  end
+
+  # Helper: Convert binary to list of values based on dtype
+  defp binary_to_values(<<>>, _dtype), do: []
+
+  defp binary_to_values(data, :int8) do
+    for <<value::signed-8 <- data>>, do: value
+  end
+
+  defp binary_to_values(data, :int16) do
+    for <<value::signed-little-16 <- data>>, do: value
+  end
+
+  defp binary_to_values(data, :int32) do
+    for <<value::signed-little-32 <- data>>, do: value
+  end
+
+  defp binary_to_values(data, :int64) do
+    for <<value::signed-little-64 <- data>>, do: value
+  end
+
+  defp binary_to_values(data, :uint8) do
+    for <<value::unsigned-8 <- data>>, do: value
+  end
+
+  defp binary_to_values(data, :uint16) do
+    for <<value::unsigned-little-16 <- data>>, do: value
+  end
+
+  defp binary_to_values(data, :uint32) do
+    for <<value::unsigned-little-32 <- data>>, do: value
+  end
+
+  defp binary_to_values(data, :uint64) do
+    for <<value::unsigned-little-64 <- data>>, do: value
+  end
+
+  defp binary_to_values(data, :float32) do
+    for <<value::float-little-32 <- data>>, do: value
+  end
+
+  defp binary_to_values(data, :float64) do
+    for <<value::float-little-64 <- data>>, do: value
+  end
+
+  # Helper: Convert list of values to binary based on dtype
+  defp values_to_binary(values, :int8) do
+    for value <- values, into: <<>>, do: <<value::signed-8>>
+  end
+
+  defp values_to_binary(values, :int16) do
+    for value <- values, into: <<>>, do: <<value::signed-little-16>>
+  end
+
+  defp values_to_binary(values, :int32) do
+    for value <- values, into: <<>>, do: <<value::signed-little-32>>
+  end
+
+  defp values_to_binary(values, :int64) do
+    for value <- values, into: <<>>, do: <<value::signed-little-64>>
+  end
+
+  defp values_to_binary(values, :uint8) do
+    for value <- values, into: <<>>, do: <<value::unsigned-8>>
+  end
+
+  defp values_to_binary(values, :uint16) do
+    for value <- values, into: <<>>, do: <<value::unsigned-little-16>>
+  end
+
+  defp values_to_binary(values, :uint32) do
+    for value <- values, into: <<>>, do: <<value::unsigned-little-32>>
+  end
+
+  defp values_to_binary(values, :uint64) do
+    for value <- values, into: <<>>, do: <<value::unsigned-little-64>>
+  end
+
+  defp values_to_binary(values, :float32) do
+    for value <- values, into: <<>>, do: <<value::float-little-32>>
+  end
+
+  defp values_to_binary(values, :float64) do
+    for value <- values, into: <<>>, do: <<value::float-little-64>>
+  end
+
+  defp encode_builtin_filter(data, :quantize, opts) when is_binary(data) do
+    digits = Keyword.fetch!(opts, :digits)
+    dtype = Keyword.fetch!(opts, :dtype)
+
+    # Quantize: round to specified decimal digits
+    # Formula: round(value * 10^digits) / 10^digits
+    scale = :math.pow(10, digits)
+
+    values = binary_to_values(data, dtype)
+
+    quantized =
+      case dtype do
+        dt when dt in [:float32, :float64] ->
+          Enum.map(values, fn value ->
+            Float.round(value * scale) / scale
+          end)
+
+        _ ->
+          # For non-float types, quantization doesn't apply
+          values
+      end
+
+    encoded = values_to_binary(quantized, dtype)
+    {:ok, encoded}
+  end
+
+  defp decode_builtin_filter(data, :quantize, _opts) do
+    # Quantization is lossy and irreversible - decode is passthrough
+    {:ok, data}
+  end
+
+  defp encode_builtin_filter(data, :shuffle, _opts) do
+    # Placeholder: just return data as-is until Shuffle filter is implemented
+    {:ok, data}
+  end
+
+  defp decode_builtin_filter(data, :shuffle, _opts) do
+    # Placeholder: just return data as-is until Shuffle filter is implemented
+    {:ok, data}
+  end
+
+  defp encode_builtin_filter(data, :fixedscaleoffset, opts) when is_binary(data) do
+    offset = Keyword.fetch!(opts, :offset)
+    scale = Keyword.fetch!(opts, :scale)
+    dtype = Keyword.fetch!(opts, :dtype)
+    astype = Keyword.fetch!(opts, :astype)
+
+    # FixedScaleOffset: encode = round((value - offset) / scale)
+    values = binary_to_values(data, dtype)
+
+    encoded =
+      Enum.map(values, fn value ->
+        round((value - offset) / scale)
+      end)
+
+    encoded_binary = values_to_binary(encoded, astype)
+    {:ok, encoded_binary}
+  end
+
+  defp decode_builtin_filter(data, :fixedscaleoffset, opts) when is_binary(data) do
+    offset = Keyword.fetch!(opts, :offset)
+    scale = Keyword.fetch!(opts, :scale)
+    dtype = Keyword.fetch!(opts, :dtype)
+    astype = Keyword.fetch!(opts, :astype)
+
+    # FixedScaleOffset: decode = (value * scale) + offset
+    values = binary_to_values(data, astype)
+
+    decoded =
+      Enum.map(values, fn value ->
+        value * scale + offset
+      end)
+
+    decoded_binary = values_to_binary(decoded, dtype)
+    {:ok, decoded_binary}
+  end
+
+  defp encode_builtin_filter(data, :astype, opts) when is_binary(data) do
+    decode_dtype = Keyword.fetch!(opts, :decode_dtype)
+    encode_dtype = Keyword.fetch!(opts, :encode_dtype)
+
+    # AsType: convert from decode_dtype to encode_dtype
+    values = binary_to_values(data, decode_dtype)
+    encoded = values_to_binary(values, encode_dtype)
+    {:ok, encoded}
+  end
+
+  defp decode_builtin_filter(data, :astype, opts) when is_binary(data) do
+    decode_dtype = Keyword.fetch!(opts, :decode_dtype)
+    encode_dtype = Keyword.fetch!(opts, :encode_dtype)
+
+    # AsType: convert from encode_dtype back to decode_dtype
+    values = binary_to_values(data, encode_dtype)
+    decoded = values_to_binary(values, decode_dtype)
+    {:ok, decoded}
+  end
+
+  defp encode_builtin_filter(data, :packbits, _opts) do
+    # Placeholder: just return data as-is until PackBits filter is implemented
+    {:ok, data}
+  end
+
+  defp decode_builtin_filter(data, :packbits, _opts) do
+    # Placeholder: just return data as-is until PackBits filter is implemented
+    {:ok, data}
+  end
+
+  defp encode_builtin_filter(data, :categorize, _opts) do
+    # Placeholder: just return data as-is until Categorize filter is implemented
+    {:ok, data}
+  end
+
+  defp decode_builtin_filter(data, :categorize, _opts) do
+    # Placeholder: just return data as-is until Categorize filter is implemented
+    {:ok, data}
+  end
+
+  defp encode_builtin_filter(data, :bitround, _opts) do
+    # Placeholder: just return data as-is until BitRound filter is implemented
+    {:ok, data}
+  end
+
+  defp decode_builtin_filter(data, :bitround, _opts) do
+    # Placeholder: just return data as-is until BitRound filter is implemented
+    {:ok, data}
+  end
 end

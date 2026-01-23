@@ -221,9 +221,10 @@ defmodule ExZarr.Codecs.Registry do
 
   @impl true
   def init(opts) do
-    # Initialize with built-in codecs
+    # Initialize with built-in codecs and filters
     # Note: These will be replaced with actual codec modules in phase 2
     built_in = %{
+      # Compression codecs
       none: :builtin_none,
       zlib: :builtin_zlib,
       crc32c: :builtin_crc32c,
@@ -231,7 +232,16 @@ defmodule ExZarr.Codecs.Registry do
       lz4: :builtin_lz4,
       snappy: :builtin_snappy,
       blosc: :builtin_blosc,
-      bzip2: :builtin_bzip2
+      bzip2: :builtin_bzip2,
+      # Transformation filters
+      delta: :builtin_delta,
+      quantize: :builtin_quantize,
+      shuffle: :builtin_shuffle,
+      fixedscaleoffset: :builtin_fixedscaleoffset,
+      astype: :builtin_astype,
+      packbits: :builtin_packbits,
+      categorize: :builtin_categorize,
+      bitround: :builtin_bitround
     }
 
     # Load custom codecs from application config

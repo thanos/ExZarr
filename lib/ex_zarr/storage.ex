@@ -294,7 +294,8 @@ defmodule ExZarr.Storage do
         compressor: parse_compressor(metadata.compressor),
         fill_value: metadata.fill_value,
         order: Map.get(metadata, :order, "C"),
-        zarr_format: metadata.zarr_format
+        zarr_format: metadata.zarr_format,
+        filters: parse_filters(Map.get(metadata, :filters))
       }
 
       {:ok, parsed_metadata}
@@ -356,7 +357,7 @@ defmodule ExZarr.Storage do
       compressor: compressor_to_json(metadata.compressor),
       fill_value: metadata.fill_value,
       order: metadata.order,
-      filters: nil
+      filters: encode_filters(metadata.filters)
     }
 
     with {:ok, json} <- Jason.encode(metadata_json, pretty: true) do
@@ -500,4 +501,190 @@ defmodule ExZarr.Storage do
   defp dtype_to_string(:uint64), do: "<u8"
   defp dtype_to_string(:float32), do: "<f4"
   defp dtype_to_string(:float64), do: "<f8"
+
+  # Filter serialization helpers
+
+  defp encode_filters(nil), do: nil
+  defp encode_filters([]), do: nil
+
+  defp encode_filters(filters) when is_list(filters) do
+    Enum.map(filters, fn {filter_id, opts} ->
+      case ExZarr.Codecs.Registry.get(filter_id) do
+        {:ok, :builtin_delta} -> encode_builtin_filter(:delta, opts)
+        {:ok, :builtin_quantize} -> encode_builtin_filter(:quantize, opts)
+        {:ok, :builtin_shuffle} -> encode_builtin_filter(:shuffle, opts)
+        {:ok, :builtin_fixedscaleoffset} -> encode_builtin_filter(:fixedscaleoffset, opts)
+        {:ok, :builtin_astype} -> encode_builtin_filter(:astype, opts)
+        {:ok, :builtin_packbits} -> encode_builtin_filter(:packbits, opts)
+        {:ok, :builtin_categorize} -> encode_builtin_filter(:categorize, opts)
+        {:ok, :builtin_bitround} -> encode_builtin_filter(:bitround, opts)
+        {:ok, module} when is_atom(module) ->
+          # Custom filter - ask module to encode
+          module.to_json_config(opts)
+
+        {:error, :not_found} ->
+          # Shouldn't happen (validated in metadata), but handle gracefully
+          %{"id" => Atom.to_string(filter_id)}
+      end
+    end)
+  end
+
+  defp encode_builtin_filter(:delta, opts) do
+    %{
+      "id" => "delta",
+      "dtype" => dtype_to_string(opts[:dtype]),
+      "astype" => dtype_to_string(opts[:astype] || opts[:dtype])
+    }
+  end
+
+  defp encode_builtin_filter(:quantize, opts) do
+    %{
+      "id" => "quantize",
+      "digits" => opts[:digits],
+      "dtype" => dtype_to_string(opts[:dtype])
+    }
+  end
+
+  defp encode_builtin_filter(:shuffle, opts) do
+    %{
+      "id" => "shuffle",
+      "elementsize" => opts[:elementsize] || 4
+    }
+  end
+
+  defp encode_builtin_filter(:fixedscaleoffset, opts) do
+    %{
+      "id" => "fixedscaleoffset",
+      "offset" => opts[:offset],
+      "scale" => opts[:scale],
+      "dtype" => dtype_to_string(opts[:dtype]),
+      "astype" => dtype_to_string(opts[:astype] || opts[:dtype])
+    }
+  end
+
+  defp encode_builtin_filter(:astype, opts) do
+    %{
+      "id" => "astype",
+      "encode_dtype" => dtype_to_string(opts[:encode_dtype]),
+      "decode_dtype" => dtype_to_string(opts[:decode_dtype])
+    }
+  end
+
+  defp encode_builtin_filter(:packbits, _opts) do
+    %{"id" => "packbits"}
+  end
+
+  defp encode_builtin_filter(:categorize, opts) do
+    %{
+      "id" => "categorize",
+      "dtype" => dtype_to_string(opts[:dtype])
+    }
+  end
+
+  defp encode_builtin_filter(:bitround, opts) do
+    %{
+      "id" => "bitround",
+      "keepbits" => opts[:keepbits]
+    }
+  end
+
+  defp parse_filters(nil), do: nil
+  defp parse_filters([]), do: nil
+
+  defp parse_filters(filters) when is_list(filters) do
+    filters
+    |> Enum.map(fn filter_config ->
+      filter_id = String.to_atom(filter_config[:id] || filter_config["id"])
+
+      case ExZarr.Codecs.Registry.get(filter_id) do
+        {:ok, :builtin_delta} ->
+          {filter_id, parse_builtin_filter(:delta, filter_config)}
+
+        {:ok, :builtin_quantize} ->
+          {filter_id, parse_builtin_filter(:quantize, filter_config)}
+
+        {:ok, :builtin_shuffle} ->
+          {filter_id, parse_builtin_filter(:shuffle, filter_config)}
+
+        {:ok, :builtin_fixedscaleoffset} ->
+          {filter_id, parse_builtin_filter(:fixedscaleoffset, filter_config)}
+
+        {:ok, :builtin_astype} ->
+          {filter_id, parse_builtin_filter(:astype, filter_config)}
+
+        {:ok, :builtin_packbits} ->
+          {filter_id, parse_builtin_filter(:packbits, filter_config)}
+
+        {:ok, :builtin_categorize} ->
+          {filter_id, parse_builtin_filter(:categorize, filter_config)}
+
+        {:ok, :builtin_bitround} ->
+          {filter_id, parse_builtin_filter(:bitround, filter_config)}
+
+        {:ok, module} when is_atom(module) ->
+          # Custom filter
+          opts = module.from_json_config(filter_config)
+          {filter_id, opts}
+
+        {:error, :not_found} ->
+          # Unknown filter - log warning but allow reading
+          require Logger
+          Logger.warning("Unknown filter: #{filter_id}")
+          {filter_id, []}
+      end
+    end)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp parse_builtin_filter(:delta, config) do
+    [
+      dtype: string_to_dtype(config[:dtype] || config["dtype"]),
+      astype: string_to_dtype(config[:astype] || config["astype"])
+    ]
+  end
+
+  defp parse_builtin_filter(:quantize, config) do
+    [
+      digits: config[:digits] || config["digits"],
+      dtype: string_to_dtype(config[:dtype] || config["dtype"])
+    ]
+  end
+
+  defp parse_builtin_filter(:shuffle, config) do
+    [
+      elementsize: config[:elementsize] || config["elementsize"] || 4
+    ]
+  end
+
+  defp parse_builtin_filter(:fixedscaleoffset, config) do
+    [
+      offset: config[:offset] || config["offset"],
+      scale: config[:scale] || config["scale"],
+      dtype: string_to_dtype(config[:dtype] || config["dtype"]),
+      astype: string_to_dtype(config[:astype] || config["astype"])
+    ]
+  end
+
+  defp parse_builtin_filter(:astype, config) do
+    [
+      encode_dtype: string_to_dtype(config[:encode_dtype] || config["encode_dtype"]),
+      decode_dtype: string_to_dtype(config[:decode_dtype] || config["decode_dtype"])
+    ]
+  end
+
+  defp parse_builtin_filter(:packbits, _config) do
+    []
+  end
+
+  defp parse_builtin_filter(:categorize, config) do
+    [
+      dtype: string_to_dtype(config[:dtype] || config["dtype"])
+    ]
+  end
+
+  defp parse_builtin_filter(:bitround, config) do
+    [
+      keepbits: config[:keepbits] || config["keepbits"]
+    ]
+  end
 end
