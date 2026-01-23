@@ -69,6 +69,8 @@ defmodule ExZarr.Codecs.Registry do
   use GenServer
   require Logger
 
+  alias Codec
+
   @type codec_module :: module()
   @type codec_id :: atom()
   @type registry_state :: %{
@@ -91,7 +93,7 @@ defmodule ExZarr.Codecs.Registry do
   @doc """
   Registers a custom codec module.
 
-  The module must implement the `ExZarr.Codecs.Codec` behavior.
+  The module must implement the `Codec` behavior.
 
   ## Options
 
@@ -269,21 +271,19 @@ defmodule ExZarr.Codecs.Registry do
   @impl true
   def handle_call({:register, codec_module, opts}, _from, state) do
     # Validate that module implements behavior
-    unless ExZarr.Codecs.Codec.implements?(codec_module) do
-      {:reply, {:error, :invalid_codec}, state}
-    else
+    if ExZarr.Codecs.Codec.implements?(codec_module) do
       codec_id = codec_module.codec_id()
       force = Keyword.get(opts, :force, false)
 
-      cond do
-        Map.has_key?(state.codecs, codec_id) and not force ->
-          {:reply, {:error, :already_registered}, state}
-
-        true ->
-          new_codecs = Map.put(state.codecs, codec_id, codec_module)
-          Logger.debug("Registered codec: #{inspect(codec_id)} -> #{inspect(codec_module)}")
-          {:reply, :ok, %{state | codecs: new_codecs}}
+      if Map.has_key?(state.codecs, codec_id) and not force do
+        {:reply, {:error, :already_registered}, state}
+      else
+        new_codecs = Map.put(state.codecs, codec_id, codec_module)
+        Logger.debug("Registered codec: #{inspect(codec_id)} -> #{inspect(codec_module)}")
+        {:reply, :ok, %{state | codecs: new_codecs}}
       end
+    else
+      {:reply, {:error, :invalid_codec}, state}
     end
   end
 
@@ -324,12 +324,27 @@ defmodule ExZarr.Codecs.Registry do
       |> Enum.filter(fn {_id, module} ->
         # Built-in codecs (atoms starting with :builtin_) are checked differently
         case module do
-          :builtin_none -> true
-          :builtin_zlib -> true
-          :builtin_crc32c -> true
-          atom when is_atom(atom) and atom in [:builtin_zstd, :builtin_lz4, :builtin_snappy, :builtin_blosc, :builtin_bzip2] ->
+          :builtin_none ->
+            true
+
+          :builtin_zlib ->
+            true
+
+          :builtin_crc32c ->
+            true
+
+          atom
+          when is_atom(atom) and
+                 atom in [
+                   :builtin_zstd,
+                   :builtin_lz4,
+                   :builtin_snappy,
+                   :builtin_blosc,
+                   :builtin_bzip2
+                 ] ->
             # These will be checked through the old system until phase 2
             check_builtin_available(atom)
+
           _module ->
             # Custom codec - call its available? callback
             try do
@@ -348,7 +363,18 @@ defmodule ExZarr.Codecs.Registry do
   @impl true
   def handle_call({:info, codec_id}, _from, state) do
     case Map.fetch(state.codecs, codec_id) do
-      {:ok, module} when is_atom(module) and module in [:builtin_none, :builtin_zlib, :builtin_crc32c, :builtin_zstd, :builtin_lz4, :builtin_snappy, :builtin_blosc, :builtin_bzip2] ->
+      {:ok, module}
+      when is_atom(module) and
+             module in [
+               :builtin_none,
+               :builtin_zlib,
+               :builtin_crc32c,
+               :builtin_zstd,
+               :builtin_lz4,
+               :builtin_snappy,
+               :builtin_blosc,
+               :builtin_bzip2
+             ] ->
         # Built-in codec info
         info = get_builtin_info(module)
         {:reply, {:ok, info}, state}
@@ -466,5 +492,6 @@ defmodule ExZarr.Codecs.Registry do
     }
   end
 
-  defp get_builtin_info(_), do: %{name: "Unknown", version: "0.0.0", type: :unknown, description: "Unknown codec"}
+  defp get_builtin_info(_),
+    do: %{name: "Unknown", version: "0.0.0", type: :unknown, description: "Unknown codec"}
 end

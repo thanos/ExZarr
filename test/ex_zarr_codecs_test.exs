@@ -111,7 +111,7 @@ defmodule ExZarr.CodecsExtendedTest do
       corrupted = prefix <> <<0, 0, 0, 0>>
 
       assert {:error, {:checksum_validation_failed, :crc32c_checksum_mismatch}} =
-        Codecs.decompress(corrupted, :crc32c)
+               Codecs.decompress(corrupted, :crc32c)
     end
 
     test "crc32c detects data corruption" do
@@ -123,18 +123,19 @@ defmodule ExZarr.CodecsExtendedTest do
       corrupted = <<bxor(first_byte, 1), rest::binary>>
 
       assert {:error, {:checksum_validation_failed, :crc32c_checksum_mismatch}} =
-        Codecs.decompress(corrupted, :crc32c)
+               Codecs.decompress(corrupted, :crc32c)
     end
 
     test "crc32c with empty data" do
       data = ""
       assert {:ok, encoded} = Codecs.compress(data, :crc32c)
-      assert byte_size(encoded) == 4  # Just the checksum
+      # Just the checksum
+      assert byte_size(encoded) == 4
       assert {:ok, ^data} = Codecs.decompress(encoded, :crc32c)
     end
 
     test "crc32c with large data" do
-      data = String.duplicate("ExZarr is awesome! ", 10000)
+      data = String.duplicate("ExZarr is awesome! ", 10_000)
       assert {:ok, encoded} = Codecs.compress(data, :crc32c)
       assert byte_size(encoded) == byte_size(data) + 4
       assert {:ok, ^data} = Codecs.decompress(encoded, :crc32c)
@@ -150,8 +151,9 @@ defmodule ExZarr.CodecsExtendedTest do
     test "crc32c rejects too-short data" do
       # Data must be at least 4 bytes (for checksum)
       short_data = <<1, 2, 3>>
+
       assert {:error, {:checksum_validation_failed, :crc32c_invalid_data}} =
-        Codecs.decompress(short_data, :crc32c)
+               Codecs.decompress(short_data, :crc32c)
     end
 
     test "crc32c is deterministic" do

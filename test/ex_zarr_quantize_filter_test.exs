@@ -170,7 +170,7 @@ defmodule ExZarr.QuantizeFilterTest do
     end
 
     test "integration: quantize filter persisted to filesystem" do
-      path = "/tmp/test_quantize_#{:rand.uniform(1000000)}"
+      path = "/tmp/test_quantize_#{:rand.uniform(1_000_000)}"
 
       try do
         {:ok, array} =

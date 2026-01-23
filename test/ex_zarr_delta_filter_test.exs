@@ -120,7 +120,7 @@ defmodule ExZarr.DeltaFilterTest do
     end
 
     test "integration: delta filter persisted to filesystem" do
-      path = "/tmp/test_delta_#{:rand.uniform(1000000)}"
+      path = "/tmp/test_delta_#{:rand.uniform(1_000_000)}"
 
       try do
         {:ok, array} =

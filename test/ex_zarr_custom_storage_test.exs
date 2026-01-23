@@ -309,17 +309,19 @@ defmodule ExZarr.CustomStorageTest do
 
       # Now we should have chunks
       {:ok, chunks} = ExZarr.Storage.list_chunks(array.storage)
-      assert length(chunks) == 4  # 100/25 = 4 chunks
+      # 100/25 = 4 chunks
+      assert length(chunks) == 4
     end
   end
 
   describe "Error handling" do
     test "returns error for unregistered backend" do
-      result = ExZarr.create(
-        shape: {100},
-        chunks: {10},
-        storage: :nonexistent_backend
-      )
+      result =
+        ExZarr.create(
+          shape: {100},
+          chunks: {10},
+          storage: :nonexistent_backend
+        )
 
       assert {:error, :invalid_storage_config} = result
     end

@@ -155,7 +155,7 @@ defmodule ExZarr.ShuffleFilterTest do
     end
 
     test "integration: shuffle filter persisted to filesystem" do
-      path = "/tmp/test_shuffle_#{:rand.uniform(1000000)}"
+      path = "/tmp/test_shuffle_#{:rand.uniform(1_000_000)}"
 
       try do
         {:ok, array} =

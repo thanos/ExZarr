@@ -319,6 +319,149 @@ end
 - `delete_chunk/2` - Delete a chunk
 - `exists?/1` - Check if storage location exists
 
+### Cloud and Database Storage Backends
+
+ExZarr includes several pre-built storage backends for cloud services and databases:
+
+#### AWS S3 Storage
+
+```elixir
+# Add dependencies
+{:ex_aws, "~> 2.5"},
+{:ex_aws_s3, "~> 2.5"}
+
+# Register and use
+:ok = ExZarr.Storage.Registry.register(ExZarr.Storage.Backend.S3)
+
+{:ok, array} = ExZarr.create(
+  shape: {1000, 1000},
+  chunks: {100, 100},
+  storage: :s3,
+  bucket: "my-zarr-bucket",
+  prefix: "experiments/array1",
+  region: "us-west-2"
+)
+```
+
+#### Azure Blob Storage
+
+```elixir
+# Add dependency
+{:azurex, "~> 0.3"}
+
+# Register and use
+:ok = ExZarr.Storage.Registry.register(ExZarr.Storage.Backend.AzureBlob)
+
+{:ok, array} = ExZarr.create(
+  shape: {1000, 1000},
+  chunks: {100, 100},
+  storage: :azure_blob,
+  account_name: "mystorageaccount",
+  account_key: System.get_env("AZURE_STORAGE_KEY"),
+  container: "zarr-data",
+  prefix: "experiments/array1"
+)
+```
+
+#### Google Cloud Storage
+
+```elixir
+# Add dependencies
+{:goth, "~> 1.4"},
+{:req, "~> 0.4"}
+
+# Register and use
+:ok = ExZarr.Storage.Registry.register(ExZarr.Storage.Backend.GCS)
+
+{:ok, array} = ExZarr.create(
+  shape: {1000, 1000},
+  chunks: {100, 100},
+  storage: :gcs,
+  bucket: "my-zarr-bucket",
+  prefix: "experiments/array1",
+  credentials: "/path/to/service-account.json"
+)
+```
+
+#### Mnesia (Distributed Database)
+
+```elixir
+# No external dependencies - Mnesia is built into Erlang/OTP
+
+# Initialize Mnesia
+:mnesia.create_schema([node()])
+:mnesia.start()
+
+# Register and use
+:ok = ExZarr.Storage.Registry.register(ExZarr.Storage.Backend.Mnesia)
+
+{:ok, array} = ExZarr.create(
+  shape: {1000, 1000},
+  chunks: {100, 100},
+  storage: :mnesia,
+  array_id: "experiment_001",
+  table_name: :zarr_storage
+)
+```
+
+#### MongoDB GridFS
+
+```elixir
+# Add dependency
+{:mongodb_driver, "~> 1.4"}
+
+# Register and use
+:ok = ExZarr.Storage.Registry.register(ExZarr.Storage.Backend.MongoGridFS)
+
+{:ok, array} = ExZarr.create(
+  shape: {1000, 1000},
+  chunks: {100, 100},
+  storage: :mongo_gridfs,
+  url: "mongodb://localhost:27017",
+  database: "zarr_db",
+  bucket: "arrays",
+  array_id: "experiment_001"
+)
+```
+
+#### Mock Storage (Testing)
+
+```elixir
+# No dependencies - built-in for testing
+
+:ok = ExZarr.Storage.Registry.register(ExZarr.Storage.Backend.Mock)
+
+# Test with error simulation
+{:ok, array} = ExZarr.create(
+  shape: {100},
+  chunks: {10},
+  storage: :mock,
+  pid: self(),
+  error_mode: :random,
+  delay: 50  # Simulate 50ms latency
+)
+
+# Verify operations
+assert_received {:mock_storage, :write_chunk, _}
+```
+
+**Cloud Storage Features:**
+- S3, Azure Blob, and GCS backends provide scalable object storage
+- Automatic credential management from environment/config
+- Support for custom regions, buckets, and access patterns
+- Thread-safe concurrent access
+
+**Database Storage Features:**
+- Mnesia provides distributed ACID transactions
+- MongoDB GridFS handles large files (> 16MB chunks)
+- Both support replication and high availability
+
+**Mock Storage Features:**
+- Error simulation (always fail, random, or specific operations)
+- Latency simulation for performance testing
+- Message tracking for verification
+- State inspection for debugging
+
 ## Architecture
 
 ExZarr uses:

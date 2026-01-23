@@ -55,6 +55,8 @@ defmodule ExZarr.Storage.Registry do
   use GenServer
   require Logger
 
+  alias Backend
+
   @type backend_module :: module()
   @type backend_id :: atom()
   @type registry_state :: %{
@@ -77,7 +79,7 @@ defmodule ExZarr.Storage.Registry do
   @doc """
   Registers a custom storage backend module.
 
-  The module must implement the `ExZarr.Storage.Backend` behavior.
+  The module must implement the `Backend` behavior.
 
   ## Options
 
@@ -224,25 +226,23 @@ defmodule ExZarr.Storage.Registry do
   @impl true
   def handle_call({:register, backend_module, opts}, _from, state) do
     # Validate that module implements behavior
-    unless ExZarr.Storage.Backend.implements?(backend_module) do
-      {:reply, {:error, :invalid_backend}, state}
-    else
+    if ExZarr.Storage.Backend.implements?(backend_module) do
       backend_id = backend_module.backend_id()
       force = Keyword.get(opts, :force, false)
 
-      cond do
-        Map.has_key?(state.backends, backend_id) and not force ->
-          {:reply, {:error, :already_registered}, state}
+      if Map.has_key?(state.backends, backend_id) and not force do
+        {:reply, {:error, :already_registered}, state}
+      else
+        new_backends = Map.put(state.backends, backend_id, backend_module)
 
-        true ->
-          new_backends = Map.put(state.backends, backend_id, backend_module)
+        Logger.debug(
+          "Registered storage backend: #{inspect(backend_id)} -> #{inspect(backend_module)}"
+        )
 
-          Logger.debug(
-            "Registered storage backend: #{inspect(backend_id)} -> #{inspect(backend_module)}"
-          )
-
-          {:reply, :ok, %{state | backends: new_backends}}
+        {:reply, :ok, %{state | backends: new_backends}}
       end
+    else
+      {:reply, {:error, :invalid_backend}, state}
     end
   end
 
@@ -280,39 +280,40 @@ defmodule ExZarr.Storage.Registry do
   def handle_call({:info, backend_id}, _from, state) do
     case Map.fetch(state.backends, backend_id) do
       {:ok, module} when is_atom(module) ->
-        # Try to get backend info if available
-        info =
-          if function_exported?(module, :backend_info, 0) do
-            module.backend_info()
-          else
-            # Build basic info from module
-            description =
-              cond do
-                backend_id in state.built_in and backend_id == :memory ->
-                  "In-memory storage (non-persistent)"
-
-                backend_id in state.built_in and backend_id == :filesystem ->
-                  "Local filesystem storage"
-
-                backend_id in state.built_in and backend_id == :zip ->
-                  "Zip archive storage"
-
-                true ->
-                  "Custom storage backend"
-              end
-
-            %{
-              id: backend_id,
-              module: module,
-              description: description,
-              type: if(backend_id in state.built_in, do: :built_in, else: :custom)
-            }
-          end
-
+        info = get_backend_info(module, backend_id, state.built_in)
         {:reply, {:ok, info}, state}
 
       :error ->
         {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  defp get_backend_info(module, backend_id, built_in) do
+    if function_exported?(module, :backend_info, 0) do
+      module.backend_info()
+    else
+      %{
+        id: backend_id,
+        module: module,
+        description: get_backend_description(backend_id, built_in),
+        type: if(backend_id in built_in, do: :built_in, else: :custom)
+      }
+    end
+  end
+
+  defp get_backend_description(backend_id, built_in) do
+    cond do
+      backend_id in built_in and backend_id == :memory ->
+        "In-memory storage (non-persistent)"
+
+      backend_id in built_in and backend_id == :filesystem ->
+        "Local filesystem storage"
+
+      backend_id in built_in and backend_id == :zip ->
+        "Zip archive storage"
+
+      true ->
+        "Custom storage backend"
     end
   end
 end

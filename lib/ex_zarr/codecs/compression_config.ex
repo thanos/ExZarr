@@ -143,12 +143,10 @@ defmodule ExZarr.Codecs.CompressionConfig do
           arch when is_list(arch) ->
             arch_str = List.to_string(arch)
 
-            cond do
-              String.contains?(arch_str, "aarch64") or String.contains?(arch_str, "arm64") ->
-                "/opt/homebrew"
-
-              true ->
-                "/usr/local"
+            if String.contains?(arch_str, "aarch64") or String.contains?(arch_str, "arm64") do
+              "/opt/homebrew"
+            else
+              "/usr/local"
             end
 
           _ ->

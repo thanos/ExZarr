@@ -475,14 +475,30 @@ defmodule ExZarr.Storage do
   defp encode_filters(filters) when is_list(filters) do
     Enum.map(filters, fn {filter_id, opts} ->
       case ExZarr.Codecs.Registry.get(filter_id) do
-        {:ok, :builtin_delta} -> encode_builtin_filter(:delta, opts)
-        {:ok, :builtin_quantize} -> encode_builtin_filter(:quantize, opts)
-        {:ok, :builtin_shuffle} -> encode_builtin_filter(:shuffle, opts)
-        {:ok, :builtin_fixedscaleoffset} -> encode_builtin_filter(:fixedscaleoffset, opts)
-        {:ok, :builtin_astype} -> encode_builtin_filter(:astype, opts)
-        {:ok, :builtin_packbits} -> encode_builtin_filter(:packbits, opts)
-        {:ok, :builtin_categorize} -> encode_builtin_filter(:categorize, opts)
-        {:ok, :builtin_bitround} -> encode_builtin_filter(:bitround, opts)
+        {:ok, :builtin_delta} ->
+          encode_builtin_filter(:delta, opts)
+
+        {:ok, :builtin_quantize} ->
+          encode_builtin_filter(:quantize, opts)
+
+        {:ok, :builtin_shuffle} ->
+          encode_builtin_filter(:shuffle, opts)
+
+        {:ok, :builtin_fixedscaleoffset} ->
+          encode_builtin_filter(:fixedscaleoffset, opts)
+
+        {:ok, :builtin_astype} ->
+          encode_builtin_filter(:astype, opts)
+
+        {:ok, :builtin_packbits} ->
+          encode_builtin_filter(:packbits, opts)
+
+        {:ok, :builtin_categorize} ->
+          encode_builtin_filter(:categorize, opts)
+
+        {:ok, :builtin_bitround} ->
+          encode_builtin_filter(:bitround, opts)
+
         {:ok, module} when is_atom(module) ->
           # Custom filter - ask module to encode
           module.to_json_config(opts)

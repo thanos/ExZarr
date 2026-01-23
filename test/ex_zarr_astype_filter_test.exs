@@ -183,7 +183,7 @@ defmodule ExZarr.AsTypeFilterTest do
     end
 
     test "integration: astype filter persisted to filesystem" do
-      path = "/tmp/test_astype_#{:rand.uniform(1000000)}"
+      path = "/tmp/test_astype_#{:rand.uniform(1_000_000)}"
 
       try do
         {:ok, array} =

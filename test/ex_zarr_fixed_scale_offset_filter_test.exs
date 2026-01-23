@@ -12,8 +12,7 @@ defmodule ExZarr.FixedScaleOffsetFilterTest do
           chunks: {20},
           dtype: :float64,
           filters: [
-            {:fixedscaleoffset,
-             [offset: -50.0, scale: 0.1, dtype: :float64, astype: :int32]}
+            {:fixedscaleoffset, [offset: -50.0, scale: 0.1, dtype: :float64, astype: :int32]}
           ],
           compressor: :zlib,
           storage: :memory
@@ -50,8 +49,7 @@ defmodule ExZarr.FixedScaleOffsetFilterTest do
           chunks: {10},
           dtype: :float32,
           filters: [
-            {:fixedscaleoffset,
-             [offset: 0.0, scale: 0.01, dtype: :float32, astype: :int16]}
+            {:fixedscaleoffset, [offset: 0.0, scale: 0.01, dtype: :float32, astype: :int16]}
           ],
           compressor: :zlib,
           storage: :memory
@@ -94,8 +92,7 @@ defmodule ExZarr.FixedScaleOffsetFilterTest do
           chunks: {1000},
           dtype: :float64,
           filters: [
-            {:fixedscaleoffset,
-             [offset: 20.0, scale: 0.1, dtype: :float64, astype: :int16]}
+            {:fixedscaleoffset, [offset: 20.0, scale: 0.1, dtype: :float64, astype: :int16]}
           ],
           compressor: :zlib,
           storage: :memory
@@ -135,8 +132,7 @@ defmodule ExZarr.FixedScaleOffsetFilterTest do
           chunks: {100},
           dtype: :float64,
           filters: [
-            {:fixedscaleoffset,
-             [offset: 100.0, scale: 0.5, dtype: :float64, astype: :int32]}
+            {:fixedscaleoffset, [offset: 100.0, scale: 0.5, dtype: :float64, astype: :int32]}
           ],
           compressor: :zlib,
           storage: :memory
@@ -179,7 +175,7 @@ defmodule ExZarr.FixedScaleOffsetFilterTest do
     end
 
     test "integration: fixedscaleoffset filter persisted to filesystem" do
-      path = "/tmp/test_fixedscaleoffset_#{:rand.uniform(1000000)}"
+      path = "/tmp/test_fixedscaleoffset_#{:rand.uniform(1_000_000)}"
 
       try do
         {:ok, array} =
@@ -188,8 +184,7 @@ defmodule ExZarr.FixedScaleOffsetFilterTest do
             chunks: {50},
             dtype: :float64,
             filters: [
-              {:fixedscaleoffset,
-               [offset: 0.0, scale: 1.0, dtype: :float64, astype: :int32]}
+              {:fixedscaleoffset, [offset: 0.0, scale: 1.0, dtype: :float64, astype: :int32]}
             ],
             compressor: :zlib,
             storage: :filesystem,
@@ -213,8 +208,7 @@ defmodule ExZarr.FixedScaleOffsetFilterTest do
 
         # Verify filter metadata
         assert reopened.metadata.filters == [
-                 {:fixedscaleoffset,
-                  [offset: 0.0, scale: 1.0, dtype: :float64, astype: :int32]}
+                 {:fixedscaleoffset, [offset: 0.0, scale: 1.0, dtype: :float64, astype: :int32]}
                ]
 
         # Read back
@@ -240,8 +234,7 @@ defmodule ExZarr.FixedScaleOffsetFilterTest do
           chunks: {20},
           dtype: :float64,
           filters: [
-            {:fixedscaleoffset,
-             [offset: -100.0, scale: 2.0, dtype: :float64, astype: :int16]}
+            {:fixedscaleoffset, [offset: -100.0, scale: 2.0, dtype: :float64, astype: :int16]}
           ],
           compressor: :zlib,
           storage: :memory
@@ -274,8 +267,7 @@ defmodule ExZarr.FixedScaleOffsetFilterTest do
           chunks: {10},
           dtype: :float64,
           filters: [
-            {:fixedscaleoffset,
-             [offset: 0.0, scale: 0.001, dtype: :float64, astype: :int32]}
+            {:fixedscaleoffset, [offset: 0.0, scale: 0.001, dtype: :float64, astype: :int32]}
           ],
           compressor: :zlib,
           storage: :memory

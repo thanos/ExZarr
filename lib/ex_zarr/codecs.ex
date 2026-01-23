@@ -106,10 +106,11 @@ defmodule ExZarr.Codecs do
   - Use `codec_available?/1` to check availability before use
   """
 
-  alias ExZarr.Codecs.ZigCodecs
   alias ExZarr.Codecs.Registry
+  alias ExZarr.Codecs.ZigCodecs
 
-  @type codec :: atom()  # Changed from fixed atoms to allow custom codecs
+  # Changed from fixed atoms to allow custom codecs
+  @type codec :: atom()
   @type codec_module :: module()
 
   @doc """
@@ -154,19 +155,35 @@ defmodule ExZarr.Codecs do
   # First try to use custom codec from registry
   def compress(data, codec, opts) when is_binary(data) and is_atom(codec) do
     case Registry.get(codec) do
-      {:ok, :builtin_none} -> compress_builtin(data, :none, opts)
-      {:ok, :builtin_zlib} -> compress_builtin(data, :zlib, opts)
-      {:ok, :builtin_crc32c} -> compress_builtin(data, :crc32c, opts)
-      {:ok, :builtin_zstd} -> compress_builtin(data, :zstd, opts)
-      {:ok, :builtin_lz4} -> compress_builtin(data, :lz4, opts)
-      {:ok, :builtin_snappy} -> compress_builtin(data, :snappy, opts)
-      {:ok, :builtin_blosc} -> compress_builtin(data, :blosc, opts)
-      {:ok, :builtin_bzip2} -> compress_builtin(data, :bzip2, opts)
-      {:ok, codec_module} ->
-        # Custom codec
-        codec_module.encode(data, opts)
+      {:ok, builtin} when is_atom(builtin) ->
+        handle_codec_compression(builtin, data, opts)
+
       {:error, :not_found} ->
         {:error, {:unsupported_codec, codec}}
+    end
+  end
+
+  defp handle_codec_compression(builtin, data, opts) when is_atom(builtin) do
+    case builtin do
+      codec
+      when codec in [
+             :builtin_none,
+             :builtin_zlib,
+             :builtin_crc32c,
+             :builtin_zstd,
+             :builtin_lz4,
+             :builtin_snappy,
+             :builtin_blosc,
+             :builtin_bzip2
+           ] ->
+        codec_name =
+          builtin |> Atom.to_string() |> String.replace_prefix("builtin_", "") |> String.to_atom()
+
+        compress_builtin(data, codec_name, opts)
+
+      custom_module ->
+        # Custom codec module
+        custom_module.encode(data, opts)
     end
   end
 
@@ -181,6 +198,7 @@ defmodule ExZarr.Codecs do
 
   defp compress_builtin(data, :zstd, opts) when is_binary(data) do
     level = Keyword.get(opts, :level, 3)
+
     case ZigCodecs.zstd_compress(data, level) do
       {:ok, compressed} -> {:ok, compressed}
       compressed when is_binary(compressed) -> {:ok, compressed}
@@ -193,11 +211,16 @@ defmodule ExZarr.Codecs do
   defp compress_builtin(data, :lz4, _opts) when is_binary(data) do
     # LZ4 requires original size for decompression, so we prepend it (8 bytes)
     original_size = byte_size(data)
+
     case ZigCodecs.lz4_compress(data) do
-      {:ok, compressed} -> {:ok, <<original_size::64-unsigned-native, compressed::binary>>}
+      {:ok, compressed} ->
+        {:ok, <<original_size::64-unsigned-native, compressed::binary>>}
+
       compressed when is_binary(compressed) ->
         {:ok, <<original_size::64-unsigned-native, compressed::binary>>}
-      {:error, reason} -> {:error, {:compression_failed, reason}}
+
+      {:error, reason} ->
+        {:error, {:compression_failed, reason}}
     end
   rescue
     e -> {:error, {:compression_failed, e}}
@@ -215,6 +238,7 @@ defmodule ExZarr.Codecs do
 
   defp compress_builtin(data, :blosc, opts) when is_binary(data) do
     level = Keyword.get(opts, :level, 5)
+
     case ZigCodecs.blosc_compress(data, level) do
       {:ok, compressed} -> {:ok, compressed}
       compressed when is_binary(compressed) -> {:ok, compressed}
@@ -228,11 +252,16 @@ defmodule ExZarr.Codecs do
     level = Keyword.get(opts, :level, 9)
     # Bzip2 also requires original size, prepend it (8 bytes)
     original_size = byte_size(data)
+
     case ZigCodecs.bzip2_compress(data, level) do
-      {:ok, compressed} -> {:ok, <<original_size::64-unsigned-native, compressed::binary>>}
+      {:ok, compressed} ->
+        {:ok, <<original_size::64-unsigned-native, compressed::binary>>}
+
       compressed when is_binary(compressed) ->
         {:ok, <<original_size::64-unsigned-native, compressed::binary>>}
-      {:error, reason} -> {:error, {:compression_failed, reason}}
+
+      {:error, reason} ->
+        {:error, {:compression_failed, reason}}
     end
   rescue
     e -> {:error, {:compression_failed, e}}
@@ -249,7 +278,6 @@ defmodule ExZarr.Codecs do
   rescue
     e -> {:error, {:checksum_failed, e}}
   end
-
 
   @doc """
   Decompresses data using the specified codec.
@@ -297,19 +325,35 @@ defmodule ExZarr.Codecs do
   # First try to use custom codec from registry
   def decompress(data, codec) when is_binary(data) and is_atom(codec) do
     case Registry.get(codec) do
-      {:ok, :builtin_none} -> decompress_builtin(data, :none)
-      {:ok, :builtin_zlib} -> decompress_builtin(data, :zlib)
-      {:ok, :builtin_crc32c} -> decompress_builtin(data, :crc32c)
-      {:ok, :builtin_zstd} -> decompress_builtin(data, :zstd)
-      {:ok, :builtin_lz4} -> decompress_builtin(data, :lz4)
-      {:ok, :builtin_snappy} -> decompress_builtin(data, :snappy)
-      {:ok, :builtin_blosc} -> decompress_builtin(data, :blosc)
-      {:ok, :builtin_bzip2} -> decompress_builtin(data, :bzip2)
-      {:ok, codec_module} ->
-        # Custom codec
-        codec_module.decode(data, [])
+      {:ok, builtin} when is_atom(builtin) ->
+        handle_codec_decompression(builtin, data)
+
       {:error, :not_found} ->
         {:error, {:unsupported_codec, codec}}
+    end
+  end
+
+  defp handle_codec_decompression(builtin, data) when is_atom(builtin) do
+    case builtin do
+      codec
+      when codec in [
+             :builtin_none,
+             :builtin_zlib,
+             :builtin_crc32c,
+             :builtin_zstd,
+             :builtin_lz4,
+             :builtin_snappy,
+             :builtin_blosc,
+             :builtin_bzip2
+           ] ->
+        codec_name =
+          builtin |> Atom.to_string() |> String.replace_prefix("builtin_", "") |> String.to_atom()
+
+        decompress_builtin(data, codec_name)
+
+      custom_module ->
+        # Custom codec module
+        custom_module.decode(data, [])
     end
   end
 
@@ -398,7 +442,6 @@ defmodule ExZarr.Codecs do
     e -> {:error, {:checksum_validation_failed, e}}
   end
 
-
   @doc """
   Returns the list of available codecs.
 
@@ -453,14 +496,30 @@ defmodule ExZarr.Codecs do
   @spec codec_available?(codec()) :: boolean()
   def codec_available?(codec) when is_atom(codec) do
     case Registry.get(codec) do
-      {:ok, :builtin_none} -> true
-      {:ok, :builtin_zlib} -> true
-      {:ok, :builtin_crc32c} -> true
-      {:ok, :builtin_zstd} -> nif_codec_available?(:zstd)
-      {:ok, :builtin_lz4} -> nif_codec_available?(:lz4)
-      {:ok, :builtin_snappy} -> nif_codec_available?(:snappy)
-      {:ok, :builtin_blosc} -> nif_codec_available?(:blosc)
-      {:ok, :builtin_bzip2} -> nif_codec_available?(:bzip2)
+      {:ok, :builtin_none} ->
+        true
+
+      {:ok, :builtin_zlib} ->
+        true
+
+      {:ok, :builtin_crc32c} ->
+        true
+
+      {:ok, :builtin_zstd} ->
+        nif_codec_available?(:zstd)
+
+      {:ok, :builtin_lz4} ->
+        nif_codec_available?(:lz4)
+
+      {:ok, :builtin_snappy} ->
+        nif_codec_available?(:snappy)
+
+      {:ok, :builtin_blosc} ->
+        nif_codec_available?(:blosc)
+
+      {:ok, :builtin_bzip2} ->
+        nif_codec_available?(:bzip2)
+
       {:ok, codec_module} ->
         # Custom codec - call its available? callback
         try do
@@ -468,6 +527,7 @@ defmodule ExZarr.Codecs do
         rescue
           _ -> false
         end
+
       {:error, :not_found} ->
         false
     end

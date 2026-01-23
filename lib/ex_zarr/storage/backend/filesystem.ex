@@ -145,7 +145,7 @@ defmodule ExZarr.Storage.Backend.Filesystem do
       {:ok, files} ->
         chunks =
           files
-          |> Enum.filter(&is_chunk_file?/1)
+          |> Enum.filter(&chunk_file?/1)
           |> Enum.map(&parse_chunk_filename/1)
           |> Enum.reject(&is_nil/1)
 
@@ -162,7 +162,8 @@ defmodule ExZarr.Storage.Backend.Filesystem do
 
     case File.rm(chunk_path) do
       :ok -> :ok
-      {:error, :enoent} -> :ok  # Already deleted
+      # Already deleted
+      {:error, :enoent} -> :ok
       {:error, reason} -> {:error, reason}
     end
   end
@@ -197,7 +198,7 @@ defmodule ExZarr.Storage.Backend.Filesystem do
     Path.join(base_path, chunk_name)
   end
 
-  defp is_chunk_file?(filename) do
+  defp chunk_file?(filename) do
     # Chunk files are numeric with optional dots (0, 0.0, 0.1.2, etc.)
     # Exclude .zarray and other metadata files
     String.match?(filename, ~r/^\d+(\.\d+)*$/)
@@ -205,13 +206,13 @@ defmodule ExZarr.Storage.Backend.Filesystem do
 
   defp parse_chunk_filename(filename) do
     case String.split(filename, ".") do
-      parts when length(parts) >= 1 ->
+      [] ->
+        nil
+
+      parts ->
         parts
         |> Enum.map(&String.to_integer/1)
         |> List.to_tuple()
-
-      _ ->
-        nil
     end
   rescue
     _ -> nil

@@ -138,9 +138,8 @@ defmodule ExZarr.Metadata do
   """
   @spec validate(t()) :: :ok | {:error, term()}
   def validate(%__MODULE__{} = metadata) do
-    with :ok <- validate_structure(metadata),
-         :ok <- validate_filters(metadata.filters) do
-      :ok
+    with :ok <- validate_structure(metadata) do
+      validate_filters(metadata.filters)
     end
   end
 
@@ -177,14 +176,30 @@ defmodule ExZarr.Metadata do
   defp validate_filter_spec({filter_id, opts})
        when is_atom(filter_id) and is_list(opts) do
     case ExZarr.Codecs.Registry.get(filter_id) do
-      {:ok, :builtin_delta} -> :ok
-      {:ok, :builtin_quantize} -> :ok
-      {:ok, :builtin_shuffle} -> :ok
-      {:ok, :builtin_fixedscaleoffset} -> :ok
-      {:ok, :builtin_astype} -> :ok
-      {:ok, :builtin_packbits} -> :ok
-      {:ok, :builtin_categorize} -> :ok
-      {:ok, :builtin_bitround} -> :ok
+      {:ok, :builtin_delta} ->
+        :ok
+
+      {:ok, :builtin_quantize} ->
+        :ok
+
+      {:ok, :builtin_shuffle} ->
+        :ok
+
+      {:ok, :builtin_fixedscaleoffset} ->
+        :ok
+
+      {:ok, :builtin_astype} ->
+        :ok
+
+      {:ok, :builtin_packbits} ->
+        :ok
+
+      {:ok, :builtin_categorize} ->
+        :ok
+
+      {:ok, :builtin_bitround} ->
+        :ok
+
       {:ok, module} when is_atom(module) ->
         # Custom filter - validate config using module's callback
         case module.validate_config(opts) do
