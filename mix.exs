@@ -2,7 +2,7 @@ defmodule ExZarr.MixProject do
   use Mix.Project
 
   @version "0.1.0"
-  @source_url "https://github.com/your-username/ex_zarr"
+  @source_url "https://github.com/thanosvassilakis/ex_zarr"
 
   def project do
     [
@@ -70,8 +70,9 @@ defmodule ExZarr.MixProject do
 
   defp description do
     """
-    Elixir implementation of Zarr: compressed, chunked, N-dimensional arrays
-    for parallel computing. Includes Zig-based compression codecs for high performance.
+    Pure Elixir implementation of Zarr v2: compressed, chunked, N-dimensional arrays
+    with full Python zarr-python compatibility. Perfect for data science, scientific
+    computing, and working with large datasets.
     """
   end
 
@@ -81,10 +82,11 @@ defmodule ExZarr.MixProject do
       licenses: ["MIT"],
       links: %{
         "GitHub" => @source_url,
+        "Changelog" => "#{@source_url}/blob/main/CHANGELOG.md",
         "Zarr Specification" => "https://zarr.dev"
       },
       maintainers: ["Thanos Vassilakis"],
-      files: ~w(lib priv native .formatter.exs mix.exs README.md LICENSE)
+      files: ~w(lib priv native .formatter.exs mix.exs README.md CHANGELOG.md INTEROPERABILITY.md LICENSE)
     ]
   end
 
@@ -93,13 +95,16 @@ defmodule ExZarr.MixProject do
       main: "ExZarr",
       extras: [
         "README.md",
+        "CHANGELOG.md",
         "INTEROPERABILITY.md"
       ],
       groups_for_extras: [
-        Guides: ~r/INTEROPERABILITY/
+        Guides: ~r/INTEROPERABILITY/,
+        "Release Notes": ~r/CHANGELOG/
       ],
       source_ref: "v#{@version}",
-      source_url: @source_url
+      source_url: @source_url,
+      authors: ["Thanos Vassilakis"]
     ]
   end
 end

@@ -264,4 +264,3 @@ MIT
 ## Credits
 
 Inspired by [zarr-python](https://github.com/zarr-developers/zarr-python). Implements the Zarr v2 specification for compatibility with the broader Zarr ecosystem.
-
