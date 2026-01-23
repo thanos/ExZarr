@@ -323,9 +323,9 @@ These tests verify that:
 ## Roadmap
 
 Completed features:
-- ✅ Zig NIFs for high-performance compression codecs (zstd, lz4, snappy, blosc, bzip2)
-- ✅ CRC32C checksum codec (RFC 3720 compatible with Python zarr)
-- ✅ Custom codec plugin system with behavior-based architecture
+- Zig NIFs for high-performance compression codecs (zstd, lz4, snappy, blosc, bzip2)
+- CRC32C checksum codec (RFC 3720 compatible with Python zarr)
+- Custom codec plugin system with behavior-based architecture
 
 Future improvements planned for ExZarr:
 
