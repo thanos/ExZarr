@@ -1,0 +1,47 @@
+name: Question
+description: Ask a question about ExZarr
+title: "[Question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a question? We're here to help!
+
+        For general discussions, consider using [GitHub Discussions](../../discussions) instead.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What would you like to know?
+      placeholder: How do I create a 3D array and access slices from it?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What are you trying to accomplish?
+      placeholder: I'm building a scientific data processing pipeline...
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What I've Tried
+      description: What have you already attempted?
+      placeholder: |
+        I tried:
+        {:ok, array} = ExZarr.create(shape: {100, 100, 100}, ...)
+        But I'm not sure how to read a slice...
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have read the documentation
+          required: true
+        - label: I have searched for similar questions
+          required: true

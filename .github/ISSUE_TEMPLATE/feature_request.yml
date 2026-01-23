@@ -1,0 +1,87 @@
+name: Feature Request
+description: Suggest a new feature for ExZarr
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a new feature! Please provide as much detail as possible.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem does this feature solve?
+      placeholder: I need to read arrays from S3 but currently only filesystem storage is supported...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: How would you like this feature to work?
+      placeholder: |
+        Add an S3 storage backend:
+
+        {:ok, array} = ExZarr.create(
+          shape: {1000, 1000},
+          storage: :s3,
+          bucket: "my-bucket",
+          prefix: "arrays/"
+        )
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Have you considered any alternative solutions?
+      placeholder: I could export to filesystem first, but that's inefficient...
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this feature to you?
+      options:
+        - Nice to have
+        - Would be helpful
+        - Important for my use case
+        - Blocking my work
+    validations:
+      required: true
+
+  - type: dropdown
+    id: implementation
+    attributes:
+      label: Implementation Willingness
+      description: Would you be willing to help implement this feature?
+      options:
+        - "Yes, I can submit a PR"
+        - "Maybe, with guidance"
+        - "No, but I can test"
+        - "No, just suggesting"
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context, links, or examples
+      placeholder: |
+        Similar implementation in zarr-python:
+        https://github.com/zarr-developers/zarr-python/blob/main/src/zarr/storage.py
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched for similar feature requests
+          required: true
+        - label: This feature aligns with ExZarr's goals
+          required: true

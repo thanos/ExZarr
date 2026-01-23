@@ -51,6 +51,7 @@ defmodule ExZarr.MixProject do
         "GitHub" => @source_url,
         "Zarr Specification" => "https://zarr.dev"
       },
+      maintainers: ["Thanos Vassilakis"],
       files: ~w(lib priv native .formatter.exs mix.exs README.md LICENSE)
     ]
   end

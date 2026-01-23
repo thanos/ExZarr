@@ -1,0 +1,85 @@
+name: Bug Report
+description: Report a bug in ExZarr
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the following information to help us resolve the issue.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of what the bug is.
+      placeholder: When I try to create an array with shape {1000, 1000}, I get an error...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Minimal code example that reproduces the issue
+      placeholder: |
+        {:ok, array} = ExZarr.create(
+          shape: {1000, 1000},
+          chunks: {100, 100},
+          dtype: :float64
+        )
+      render: elixir
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+      placeholder: The array should be created successfully...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?
+      placeholder: Got error {:error, :shape_required}...
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Your environment details
+      value: |
+        - ExZarr version:
+        - Elixir version:
+        - Erlang/OTP version:
+        - Operating System:
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Add any other context about the problem here (stack traces, logs, etc.)
+      placeholder: |
+        Stack trace:
+        ** (MatchError) no match of right hand side value: {:error, :shape_required}
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched for similar issues
+          required: true
+        - label: I have included a minimal reproduction
+          required: true
+        - label: I have included my environment information
+          required: true
