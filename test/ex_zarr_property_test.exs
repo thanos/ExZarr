@@ -12,7 +12,18 @@ defmodule ExZarr.PropertyTest do
   # Generators
 
   defp dtype_gen do
-    member_of([:int8, :int16, :int32, :int64, :uint8, :uint16, :uint32, :uint64, :float32, :float64])
+    member_of([
+      :int8,
+      :int16,
+      :int32,
+      :int64,
+      :uint8,
+      :uint16,
+      :uint32,
+      :uint64,
+      :float32,
+      :float64
+    ])
   end
 
   defp compressor_gen do
@@ -46,7 +57,7 @@ defmodule ExZarr.PropertyTest do
 
   describe "Compression properties" do
     property "compression and decompression are inverses (zlib)" do
-      check all data <- binary(min_length: 0, max_length: 10_000) do
+      check all(data <- binary(min_length: 0, max_length: 10_000)) do
         assert {:ok, compressed} = Codecs.compress(data, :zlib)
         assert {:ok, decompressed} = Codecs.decompress(compressed, :zlib)
         assert decompressed == data
@@ -54,8 +65,10 @@ defmodule ExZarr.PropertyTest do
     end
 
     property "compression reduces size for repetitive data" do
-      check all pattern <- binary(min_length: 1, max_length: 100),
-                repetitions <- integer(10..100) do
+      check all(
+              pattern <- binary(min_length: 1, max_length: 100),
+              repetitions <- integer(10..100)
+            ) do
         data = String.duplicate(pattern, repetitions)
         {:ok, compressed} = Codecs.compress(data, :zlib)
 
@@ -67,19 +80,22 @@ defmodule ExZarr.PropertyTest do
     end
 
     property "none codec is identity" do
-      check all data <- binary(max_length: 1000) do
+      check all(data <- binary(max_length: 1000)) do
         assert {:ok, ^data} = Codecs.compress(data, :none)
         assert {:ok, ^data} = Codecs.decompress(data, :none)
       end
     end
 
     property "compression handles special cases" do
-      check all data <- one_of([
-                        constant(""),
-                        constant(<<0>>),
-                        binary(min_length: 1, max_length: 1),
-                        binary(min_length: 100_000, max_length: 100_001)
-                      ]) do
+      check all(
+              data <-
+                one_of([
+                  constant(""),
+                  constant(<<0>>),
+                  binary(min_length: 1, max_length: 1),
+                  binary(min_length: 100_000, max_length: 100_001)
+                ])
+            ) do
         assert {:ok, compressed} = Codecs.compress(data, :zlib)
         assert {:ok, ^data} = Codecs.decompress(compressed, :zlib)
       end
@@ -88,8 +104,10 @@ defmodule ExZarr.PropertyTest do
 
   describe "Chunk index calculations" do
     property "index_to_chunk is consistent" do
-      check all array_index <- tuple({integer(0..999), integer(0..999)}),
-                chunk_size <- tuple({integer(1..100), integer(1..100)}) do
+      check all(
+              array_index <- tuple({integer(0..999), integer(0..999)}),
+              chunk_size <- tuple({integer(1..100), integer(1..100)})
+            ) do
         chunk_index = Chunk.index_to_chunk(array_index, chunk_size)
 
         # Chunk index components should be non-negative
@@ -106,8 +124,13 @@ defmodule ExZarr.PropertyTest do
     end
 
     property "chunk_bounds align correctly" do
-      check all array_shape <- map({integer(100..500), integer(100..500)}, &Tuple.to_list/1) |> map(&List.to_tuple/1),
-                chunk_shape <- map({integer(10..50), integer(10..50)}, &Tuple.to_list/1) |> map(&List.to_tuple/1) do
+      check all(
+              array_shape <-
+                map({integer(100..500), integer(100..500)}, &Tuple.to_list/1)
+                |> map(&List.to_tuple/1),
+              chunk_shape <-
+                map({integer(10..50), integer(10..50)}, &Tuple.to_list/1) |> map(&List.to_tuple/1)
+            ) do
         # Calculate valid chunk indices for this array/chunk combination
         {max_x, max_y} = array_shape
         {cs_x, cs_y} = chunk_shape
@@ -115,7 +138,11 @@ defmodule ExZarr.PropertyTest do
         max_chunk_y = div(max_y - 1, cs_y)
 
         # Only test valid chunk indices
-        check all chunk_idx <- map({integer(0..max_chunk_x), integer(0..max_chunk_y)}, &Tuple.to_list/1) |> map(&List.to_tuple/1) do
+        check all(
+                chunk_idx <-
+                  map({integer(0..max_chunk_x), integer(0..max_chunk_y)}, &Tuple.to_list/1)
+                  |> map(&List.to_tuple/1)
+              ) do
           {{start_x, start_y}, {stop_x, stop_y}} =
             Chunk.chunk_bounds(chunk_idx, chunk_shape, array_shape)
 
@@ -136,7 +163,7 @@ defmodule ExZarr.PropertyTest do
     end
 
     property "calculate_strides produces valid strides" do
-      check all shape <- any_shape() do
+      check all(shape <- any_shape()) do
         strides = Chunk.calculate_strides(shape)
 
         # Strides should have same dimension as shape
@@ -154,9 +181,11 @@ defmodule ExZarr.PropertyTest do
 
   describe "Metadata properties" do
     property "metadata creation from valid config always succeeds" do
-      check all shape <- any_shape(),
-                dtype <- dtype_gen(),
-                compressor <- compressor_gen() do
+      check all(
+              shape <- any_shape(),
+              dtype <- dtype_gen(),
+              compressor <- compressor_gen()
+            ) do
         chunk_shape =
           shape
           |> Tuple.to_list()
@@ -180,8 +209,10 @@ defmodule ExZarr.PropertyTest do
     end
 
     property "num_chunks calculation is correct" do
-      check all shape <- one_of([shape_1d(), shape_2d(), shape_3d()]),
-                chunk_divisor <- integer(2..10) do
+      check all(
+              shape <- one_of([shape_1d(), shape_2d(), shape_3d()]),
+              chunk_divisor <- integer(2..10)
+            ) do
         chunk_shape =
           shape
           |> Tuple.to_list()
@@ -213,7 +244,7 @@ defmodule ExZarr.PropertyTest do
     end
 
     property "total_chunks is product of num_chunks" do
-      check all shape <- one_of([shape_1d(), shape_2d(), shape_3d()]) do
+      check all(shape <- one_of([shape_1d(), shape_2d(), shape_3d()])) do
         chunk_shape =
           shape
           |> Tuple.to_list()
@@ -243,9 +274,11 @@ defmodule ExZarr.PropertyTest do
 
   describe "Array properties" do
     property "array creation with valid parameters always succeeds" do
-      check all shape <- one_of([shape_1d(), shape_2d(), shape_3d()]),
-                dtype <- dtype_gen(),
-                compressor <- member_of([:none, :zlib]) do
+      check all(
+              shape <- one_of([shape_1d(), shape_2d(), shape_3d()]),
+              dtype <- dtype_gen(),
+              compressor <- member_of([:none, :zlib])
+            ) do
         chunk_shape =
           shape
           |> Tuple.to_list()
@@ -276,7 +309,10 @@ defmodule ExZarr.PropertyTest do
         {4, shape_4d()}
       ]
 
-      check all {expected_ndim, shape} <- member_of(generators) |> bind(fn {ndim, gen} -> map(gen, &{ndim, &1}) end) do
+      check all(
+              {expected_ndim, shape} <-
+                member_of(generators) |> bind(fn {ndim, gen} -> map(gen, &{ndim, &1}) end)
+            ) do
         chunk_shape =
           shape
           |> Tuple.to_list()
@@ -296,7 +332,7 @@ defmodule ExZarr.PropertyTest do
     end
 
     property "size is product of shape dimensions" do
-      check all shape <- any_shape() do
+      check all(shape <- any_shape()) do
         chunk_shape =
           shape
           |> Tuple.to_list()
@@ -320,7 +356,7 @@ defmodule ExZarr.PropertyTest do
     end
 
     property "itemsize matches dtype" do
-      check all dtype <- dtype_gen() do
+      check all(dtype <- dtype_gen()) do
         {:ok, array} =
           ExZarr.create(
             shape: {10, 10},
@@ -346,8 +382,10 @@ defmodule ExZarr.PropertyTest do
 
   describe "Storage properties" do
     property "memory storage write and read are consistent" do
-      check all chunk_index <- tuple({integer(0..10), integer(0..10)}),
-                data <- binary(min_length: 1, max_length: 1000) do
+      check all(
+              chunk_index <- tuple({integer(0..10), integer(0..10)}),
+              data <- binary(min_length: 1, max_length: 1000)
+            ) do
         {:ok, storage} = Storage.init(%{storage_type: :memory})
 
         :ok = Storage.write_chunk(storage, chunk_index, data)
@@ -356,7 +394,7 @@ defmodule ExZarr.PropertyTest do
     end
 
     property "missing chunks return not_found" do
-      check all chunk_index <- tuple({integer(0..100), integer(0..100)}) do
+      check all(chunk_index <- tuple({integer(0..100), integer(0..100)})) do
         {:ok, storage} = Storage.init(%{storage_type: :memory})
 
         assert {:error, :not_found} = Storage.read_chunk(storage, chunk_index)
@@ -364,9 +402,11 @@ defmodule ExZarr.PropertyTest do
     end
 
     property "metadata round-trip preserves data" do
-      check all shape <- one_of([shape_1d(), shape_2d(), shape_3d()]),
-                dtype <- dtype_gen(),
-                compressor <- compressor_gen() do
+      check all(
+              shape <- one_of([shape_1d(), shape_2d(), shape_3d()]),
+              dtype <- dtype_gen(),
+              compressor <- compressor_gen()
+            ) do
         chunk_shape =
           shape
           |> Tuple.to_list()
@@ -397,12 +437,15 @@ defmodule ExZarr.PropertyTest do
 
   describe "Codec availability" do
     property "codec_available? returns boolean" do
-      check all codec <- one_of([
-                        compressor_gen(),
-                        constant(:invalid),
-                        constant(:blosc),
-                        constant(:unknown)
-                      ]) do
+      check all(
+              codec <-
+                one_of([
+                  compressor_gen(),
+                  constant(:invalid),
+                  constant(:blosc),
+                  constant(:unknown)
+                ])
+            ) do
         result = Codecs.codec_available?(codec)
         assert is_boolean(result)
       end
@@ -411,7 +454,7 @@ defmodule ExZarr.PropertyTest do
 
   describe "Data integrity" do
     property "fill_value is preserved" do
-      check all fill_value <- one_of([integer(-1000..1000), float()]) do
+      check all(fill_value <- one_of([integer(-1000..1000), float()])) do
         {:ok, array} =
           ExZarr.create(
             shape: {10, 10},
@@ -427,7 +470,7 @@ defmodule ExZarr.PropertyTest do
 
   describe "Edge cases" do
     property "handles minimum valid dimensions" do
-      check all _ <- constant(nil) do
+      check all(_ <- constant(nil)) do
         # 1D array with size 1
         assert {:ok, array} = ExZarr.create(shape: {1}, chunks: {1}, storage: :memory)
         assert Array.ndim(array) == 1
@@ -436,7 +479,7 @@ defmodule ExZarr.PropertyTest do
     end
 
     property "handles large dimensions" do
-      check all size <- integer(10_000..100_000) do
+      check all(size <- integer(10_000..100_000)) do
         assert {:ok, array} = ExZarr.create(shape: {size}, chunks: {100}, storage: :memory)
         assert Array.size(array) == size
       end

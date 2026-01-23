@@ -285,9 +285,7 @@ defmodule ExZarr.Array do
   @spec set_slice(t(), binary(), keyword()) :: :ok | {:error, term()}
   def set_slice(array, data, opts) do
     # Validate that data is binary
-    if not is_binary(data) do
-      {:error, {:invalid_data, "data must be binary, got: #{inspect(data)}"}}
-    else
+    if is_binary(data) do
       start = Keyword.get(opts, :start, tuple_of_zeros(array.shape))
       stop = Keyword.get(opts, :stop)
 
@@ -305,6 +303,8 @@ defmodule ExZarr.Array do
            {:ok, chunks} <- split_into_chunks(array, data, start, stop) do
         write_chunks(array, chunks, chunk_indices)
       end
+    else
+      {:error, {:invalid_data, "data must be binary, got: #{inspect(data)}"}}
     end
   end
 
@@ -550,17 +550,7 @@ defmodule ExZarr.Array do
         overlap_stop = tuple_min(chunk_stop, stop)
 
         # Create or read the existing chunk
-        existing_chunk =
-          case Storage.read_chunk(array.storage, chunk_index) do
-            {:ok, compressed} ->
-              case Codecs.decompress(compressed, array.compressor) do
-                {:ok, decompressed} -> decompressed
-                {:error, _} -> create_fill_chunk(array)
-              end
-
-            {:error, :not_found} ->
-              create_fill_chunk(array)
-          end
+        existing_chunk = read_or_create_chunk(array, chunk_index)
 
         # Modify the chunk with new data
         modified_chunk =
@@ -633,6 +623,7 @@ defmodule ExZarr.Array do
     {:ok, output}
   end
 
+  # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
   defp extract_and_place_chunk_data(
          output,
          chunk_data,
@@ -688,6 +679,7 @@ defmodule ExZarr.Array do
     end
   end
 
+  # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
   defp extract_1d(
          output,
          chunk_data,
@@ -712,6 +704,7 @@ defmodule ExZarr.Array do
     <<before::binary, data::binary, after_part::binary>>
   end
 
+  # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
   defp extract_2d(
          output,
          chunk_data,
@@ -724,7 +717,7 @@ defmodule ExZarr.Array do
          element_size
        ) do
     # Copy row by row
-    Enum.reduce((overlap_start_y)..(overlap_stop_y - 1), output, fn y, acc ->
+    Enum.reduce(overlap_start_y..(overlap_stop_y - 1), output, fn y, acc ->
       # Position in chunk
       chunk_row = y - chunk_start_y
       chunk_offset = (chunk_row * chunk_w + (overlap_start_x - chunk_start_x)) * element_size
@@ -746,6 +739,7 @@ defmodule ExZarr.Array do
     end)
   end
 
+  # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
   defp extract_nd(
          output,
          chunk_data,
@@ -807,6 +801,7 @@ defmodule ExZarr.Array do
     end)
   end
 
+  # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
   defp write_to_chunk(
          chunk_data,
          input_data,
@@ -885,6 +880,7 @@ defmodule ExZarr.Array do
     <<before::binary, data::binary, after_part::binary>>
   end
 
+  # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
   defp write_2d(
          chunk_data,
          input_data,
@@ -900,7 +896,7 @@ defmodule ExZarr.Array do
     input_w = write_stop_x - write_start_x
 
     # Write row by row
-    Enum.reduce((overlap_start_y)..(overlap_stop_y - 1), chunk_data, fn y, acc ->
+    Enum.reduce(overlap_start_y..(overlap_stop_y - 1), chunk_data, fn y, acc ->
       # Position in input
       input_row = y - write_start_y
       input_offset = (input_row * input_w + (overlap_start_x - write_start_x)) * element_size
@@ -920,6 +916,7 @@ defmodule ExZarr.Array do
     end)
   end
 
+  # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
   defp write_nd(
          chunk_data,
          input_data,
@@ -981,8 +978,8 @@ defmodule ExZarr.Array do
       chunk_byte_offset = chunk_offset * element_size
 
       # Write element to chunk
-      <<before::binary-size(chunk_byte_offset), _::binary-size(element_size),
-        after_part::binary>> = acc
+      <<before::binary-size(chunk_byte_offset), _::binary-size(element_size), after_part::binary>> =
+        acc
 
       <<before::binary, element::binary, after_part::binary>>
     end)
@@ -1021,9 +1018,8 @@ defmodule ExZarr.Array do
          :ok <- validate_dimensionality(start, stop, shape),
          :ok <- validate_non_negative(start, "start"),
          :ok <- validate_non_negative(stop, "stop"),
-         :ok <- validate_start_less_than_stop(start, stop),
-         :ok <- validate_within_bounds(stop, shape) do
-      :ok
+         :ok <- validate_start_less_than_stop(start, stop) do
+      validate_within_bounds(stop, shape)
     end
   end
 
@@ -1048,8 +1044,7 @@ defmodule ExZarr.Array do
 
       stop_dim != ndim ->
         {:error,
-         {:dimension_mismatch,
-          "stop has #{stop_dim} dimensions but array has #{ndim} dimensions"}}
+         {:dimension_mismatch, "stop has #{stop_dim} dimensions but array has #{ndim} dimensions"}}
 
       true ->
         :ok
@@ -1065,7 +1060,8 @@ defmodule ExZarr.Array do
       negative = Enum.find(indices_list, &(not is_integer(&1) or &1 < 0))
 
       {:error,
-       {:invalid_index, "#{name} indices must be non-negative integers, found: #{inspect(negative)}"}}
+       {:invalid_index,
+        "#{name} indices must be non-negative integers, found: #{inspect(negative)}"}}
     end
   end
 
@@ -1132,6 +1128,19 @@ defmodule ExZarr.Array do
 
       true ->
         :ok
+    end
+  end
+
+  defp read_or_create_chunk(array, chunk_index) do
+    case Storage.read_chunk(array.storage, chunk_index) do
+      {:ok, compressed} ->
+        case Codecs.decompress(compressed, array.compressor) do
+          {:ok, decompressed} -> decompressed
+          {:error, _} -> create_fill_chunk(array)
+        end
+
+      {:error, :not_found} ->
+        create_fill_chunk(array)
     end
   end
 

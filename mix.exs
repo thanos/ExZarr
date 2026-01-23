@@ -96,7 +96,7 @@ defmodule ExZarr.MixProject do
         "INTEROPERABILITY.md"
       ],
       groups_for_extras: [
-        "Guides": ~r/INTEROPERABILITY/
+        Guides: ~r/INTEROPERABILITY/
       ],
       source_ref: "v#{@version}",
       source_url: @source_url
