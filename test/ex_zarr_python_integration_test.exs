@@ -245,14 +245,15 @@ defmodule ExZarr.PythonIntegrationTest do
       path = Path.join(@test_dir, "exzarr_1d_int32")
 
       # Create with ExZarr
-      {:ok, array} = ExZarr.create(
-        shape: {100},
-        chunks: {100},
-        dtype: :int32,
-        compressor: :zlib,
-        storage: :filesystem,
-        path: path
-      )
+      {:ok, array} =
+        ExZarr.create(
+          shape: {100},
+          chunks: {100},
+          dtype: :int32,
+          compressor: :zlib,
+          storage: :filesystem,
+          path: path
+        )
 
       :ok = ExZarr.save(array, path: path)
 
@@ -266,14 +267,15 @@ defmodule ExZarr.PythonIntegrationTest do
       path = Path.join(@test_dir, "exzarr_2d_float64")
 
       # Create with ExZarr
-      {:ok, array} = ExZarr.create(
-        shape: {50, 50},
-        chunks: {50, 50},
-        dtype: :float64,
-        compressor: :zlib,
-        storage: :filesystem,
-        path: path
-      )
+      {:ok, array} =
+        ExZarr.create(
+          shape: {50, 50},
+          chunks: {50, 50},
+          dtype: :float64,
+          compressor: :zlib,
+          storage: :filesystem,
+          path: path
+        )
 
       :ok = ExZarr.save(array, path: path)
 
@@ -287,14 +289,15 @@ defmodule ExZarr.PythonIntegrationTest do
       path = Path.join(@test_dir, "exzarr_3d_uint16")
 
       # Create with ExZarr
-      {:ok, array} = ExZarr.create(
-        shape: {10, 10, 10},
-        chunks: {10, 10, 10},
-        dtype: :uint16,
-        compressor: :zlib,
-        storage: :filesystem,
-        path: path
-      )
+      {:ok, array} =
+        ExZarr.create(
+          shape: {10, 10, 10},
+          chunks: {10, 10, 10},
+          dtype: :uint16,
+          compressor: :zlib,
+          storage: :filesystem,
+          path: path
+        )
 
       :ok = ExZarr.save(array, path: path)
 
@@ -306,23 +309,31 @@ defmodule ExZarr.PythonIntegrationTest do
 
     test "creates arrays with all dtypes readable by Python" do
       dtypes = [
-        :int8, :int16, :int32, :int64,
-        :uint8, :uint16, :uint32, :uint64,
-        :float32, :float64
+        :int8,
+        :int16,
+        :int32,
+        :int64,
+        :uint8,
+        :uint16,
+        :uint32,
+        :uint64,
+        :float32,
+        :float64
       ]
 
       for dtype <- dtypes do
         path = Path.join(@test_dir, "exzarr_all_dtypes_#{dtype}")
 
         # Create with ExZarr
-        {:ok, array} = ExZarr.create(
-          shape: {50},
-          chunks: {50},
-          dtype: dtype,
-          compressor: :zlib,
-          storage: :filesystem,
-          path: path
-        )
+        {:ok, array} =
+          ExZarr.create(
+            shape: {50},
+            chunks: {50},
+            dtype: dtype,
+            compressor: :zlib,
+            storage: :filesystem,
+            path: path
+          )
 
         :ok = ExZarr.save(array, path: path)
 
@@ -352,14 +363,15 @@ defmodule ExZarr.PythonIntegrationTest do
       path = Path.join(@test_dir, "exzarr_no_compression")
 
       # Create with ExZarr (no compression)
-      {:ok, array} = ExZarr.create(
-        shape: {50},
-        chunks: {50},
-        dtype: :float64,
-        compressor: :none,
-        storage: :filesystem,
-        path: path
-      )
+      {:ok, array} =
+        ExZarr.create(
+          shape: {50},
+          chunks: {50},
+          dtype: :float64,
+          compressor: :none,
+          storage: :filesystem,
+          path: path
+        )
 
       :ok = ExZarr.save(array, path: path)
 
@@ -391,15 +403,16 @@ defmodule ExZarr.PythonIntegrationTest do
       path = Path.join(@test_dir, "metadata_exzarr")
 
       # Create with ExZarr
-      {:ok, array} = ExZarr.create(
-        shape: {150, 250},
-        chunks: {50, 50},
-        dtype: :int64,
-        compressor: :zlib,
-        fill_value: -1,
-        storage: :filesystem,
-        path: path
-      )
+      {:ok, array} =
+        ExZarr.create(
+          shape: {150, 250},
+          chunks: {50, 50},
+          dtype: :int64,
+          compressor: :zlib,
+          fill_value: -1,
+          storage: :filesystem,
+          path: path
+        )
 
       :ok = ExZarr.save(array, path: path)
 
@@ -442,14 +455,16 @@ defmodule ExZarr.PythonIntegrationTest do
       assert result["success"]
 
       # ExZarr creates with zlib
-      {:ok, array} = ExZarr.create(
-        shape: {100},
-        chunks: {100},
-        dtype: :int32,
-        compressor: :zlib,
-        storage: :filesystem,
-        path: path_ex
-      )
+      {:ok, array} =
+        ExZarr.create(
+          shape: {100},
+          chunks: {100},
+          dtype: :int32,
+          compressor: :zlib,
+          storage: :filesystem,
+          path: path_ex
+        )
+
       :ok = ExZarr.save(array, path: path_ex)
 
       # Both should be readable
