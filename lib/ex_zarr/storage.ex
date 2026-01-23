@@ -2,10 +2,48 @@ defmodule ExZarr.Storage do
   @moduledoc """
   Storage backend abstraction for Zarr arrays.
 
-  Supports multiple storage backends:
-  - `:memory` - In-memory storage (default, non-persistent)
-  - `:filesystem` - Local filesystem storage
-  - Future: `:s3` - Amazon S3 storage
+  Provides a unified interface for storing and retrieving Zarr array data
+  across different storage backends. Each backend handles chunks and metadata
+  according to the Zarr v2 specification.
+
+  ## Available Backends
+
+  - **`:memory`** - In-memory storage using Elixir maps. Fast but non-persistent.
+    Suitable for temporary arrays and testing.
+
+  - **`:filesystem`** - Local filesystem storage using the Zarr v2 directory
+    structure. Chunks are stored as individual files with dot notation (e.g., `0.0`).
+    Metadata is stored in `.zarray` JSON files.
+
+  ## Zarr Directory Structure
+
+  For filesystem storage, arrays follow this structure:
+
+      /path/to/array/
+        .zarray          # JSON metadata file
+        0.0              # Chunk at index (0, 0)
+        0.1              # Chunk at index (0, 1)
+        1.0              # Chunk at index (1, 0)
+        ...
+
+  ## Examples
+
+      # Initialize memory storage
+      {:ok, storage} = ExZarr.Storage.init(%{storage_type: :memory})
+
+      # Initialize filesystem storage
+      {:ok, storage} = ExZarr.Storage.init(%{
+        storage_type: :filesystem,
+        path: "/tmp/my_array"
+      })
+
+      # Write and read chunks
+      :ok = ExZarr.Storage.write_chunk(storage, {0, 0}, data)
+      {:ok, data} = ExZarr.Storage.read_chunk(storage, {0, 0})
+
+      # Write and read metadata
+      :ok = ExZarr.Storage.write_metadata(storage, metadata, [])
+      {:ok, metadata} = ExZarr.Storage.read_metadata(storage)
   """
 
   @type backend :: :memory | :filesystem | :s3
@@ -19,6 +57,31 @@ defmodule ExZarr.Storage do
 
   @doc """
   Initializes a new storage backend.
+
+  Creates a new storage instance for the specified backend type. For filesystem
+  storage, creates the directory if it doesn't exist.
+
+  ## Parameters
+
+  - `config` - Map with `:storage_type` and optional `:path`
+
+  ## Examples
+
+      # Memory storage
+      {:ok, storage} = ExZarr.Storage.init(%{storage_type: :memory})
+
+      # Filesystem storage
+      {:ok, storage} = ExZarr.Storage.init(%{
+        storage_type: :filesystem,
+        path: "/tmp/my_array"
+      })
+
+  ## Returns
+
+  - `{:ok, storage}` on success
+  - `{:error, :path_required}` if filesystem storage without path
+  - `{:error, :invalid_storage_config}` for unsupported backends
+  - `{:error, {:mkdir_failed, reason}}` if directory creation fails
   """
   @spec init(map()) :: {:ok, t()} | {:error, term()}
   def init(%{storage_type: :memory} = _config) do
@@ -48,6 +111,33 @@ defmodule ExZarr.Storage do
 
   @doc """
   Opens an existing storage backend.
+
+  Opens a previously created storage location, typically for loading an
+  existing array. The storage must already exist (use `init/1` to create new
+  storage).
+
+  ## Options
+
+  - `:path` - Path to the storage directory (required for filesystem)
+  - `:storage` - Backend type (default: `:filesystem`)
+
+  ## Examples
+
+      # Open filesystem storage
+      {:ok, storage} = ExZarr.Storage.open(path: "/tmp/my_array")
+
+      # Open with explicit backend
+      {:ok, storage} = ExZarr.Storage.open(
+        path: "/tmp/my_array",
+        storage: :filesystem
+      )
+
+  ## Returns
+
+  - `{:ok, storage}` on success
+  - `{:error, :path_not_found}` if path does not exist
+  - `{:error, :cannot_open_memory_storage}` for memory backend
+  - `{:error, :invalid_storage_backend}` for unsupported backends
   """
   @spec open(keyword()) :: {:ok, t()} | {:error, term()}
   def open(opts) do
@@ -72,6 +162,25 @@ defmodule ExZarr.Storage do
 
   @doc """
   Reads a chunk from storage.
+
+  Retrieves compressed chunk data from storage. The chunk must have been
+  previously written.
+
+  ## Parameters
+
+  - `storage` - Storage instance
+  - `chunk_index` - Tuple identifying the chunk (e.g., `{0, 0}`)
+
+  ## Examples
+
+      {:ok, data} = ExZarr.Storage.read_chunk(storage, {0, 0})
+      {:error, :not_found} = ExZarr.Storage.read_chunk(storage, {99, 99})
+
+  ## Returns
+
+  - `{:ok, binary}` with compressed chunk data
+  - `{:error, :not_found}` if chunk doesn't exist
+  - `{:error, reason}` for other failures
   """
   @spec read_chunk(t(), tuple()) :: {:ok, binary()} | {:error, term()}
   def read_chunk(%__MODULE__{backend: :memory, state: state}, chunk_index) do
@@ -93,6 +202,30 @@ defmodule ExZarr.Storage do
 
   @doc """
   Writes a chunk to storage.
+
+  Stores compressed chunk data in the storage backend. For filesystem storage,
+  creates a file using dot notation (e.g., `0.0` for chunk `{0, 0}`). For
+  memory storage, returns an updated storage struct.
+
+  ## Parameters
+
+  - `storage` - Storage instance
+  - `chunk_index` - Tuple identifying the chunk
+  - `data` - Binary data to write (typically compressed)
+
+  ## Examples
+
+      # Filesystem storage
+      :ok = ExZarr.Storage.write_chunk(storage, {0, 0}, compressed_data)
+
+      # Memory storage (returns updated storage)
+      {:ok, new_storage} = ExZarr.Storage.write_chunk(storage, {0, 0}, data)
+
+  ## Returns
+
+  - `:ok` for filesystem storage
+  - `{:ok, updated_storage}` for memory storage
+  - `{:error, reason}` on failure
   """
   @spec write_chunk(t(), tuple(), binary()) :: :ok | {:error, term()}
   def write_chunk(%__MODULE__{backend: :memory, state: state} = storage, chunk_index, data) do
@@ -114,6 +247,23 @@ defmodule ExZarr.Storage do
 
   @doc """
   Reads metadata from storage.
+
+  Loads the `.zarray` metadata file for a Zarr array. For filesystem storage,
+  reads and parses the JSON file. Converts JSON data types back to internal
+  format (e.g., `"<f8"` to `:float64`).
+
+  ## Examples
+
+      {:ok, metadata} = ExZarr.Storage.read_metadata(storage)
+      metadata.shape    # => {1000, 1000}
+      metadata.dtype    # => :float64
+      metadata.compressor  # => :zlib
+
+  ## Returns
+
+  - `{:ok, metadata}` with parsed Metadata struct
+  - `{:error, :metadata_not_found}` if .zarray file doesn't exist
+  - `{:error, reason}` for other failures
   """
   @spec read_metadata(t()) :: {:ok, map()} | {:error, term()}
   def read_metadata(%__MODULE__{backend: :memory, state: state}) do
@@ -148,6 +298,35 @@ defmodule ExZarr.Storage do
 
   @doc """
   Writes metadata to storage.
+
+  Saves array metadata to a `.zarray` JSON file following the Zarr v2
+  specification. Converts internal data types to JSON format (e.g.,
+  `:float64` to `"<f8"`).
+
+  ## Parameters
+
+  - `storage` - Storage instance
+  - `metadata` - Metadata struct to write
+  - `opts` - Options (currently unused)
+
+  ## Examples
+
+      metadata = %ExZarr.Metadata{
+        shape: {1000, 1000},
+        chunks: {100, 100},
+        dtype: :float64,
+        compressor: :zlib,
+        fill_value: 0.0,
+        order: "C",
+        zarr_format: 2
+      }
+      :ok = ExZarr.Storage.write_metadata(storage, metadata, [])
+
+  ## Returns
+
+  - `:ok` for filesystem storage
+  - `{:ok, updated_storage}` for memory storage
+  - `{:error, reason}` on failure
   """
   @spec write_metadata(t(), ExZarr.Metadata.t(), keyword()) :: :ok | {:error, term()}
   def write_metadata(%__MODULE__{backend: :memory, state: state} = storage, metadata, _opts) do
@@ -176,6 +355,24 @@ defmodule ExZarr.Storage do
 
   @doc """
   Lists all chunk keys in the storage.
+
+  Returns a list of all chunk indices that have been written to storage.
+  For filesystem storage, reads the directory and parses chunk filenames.
+  For memory storage, returns the keys from the chunks map.
+
+  ## Examples
+
+      {:ok, chunks} = ExZarr.Storage.list_chunks(storage)
+      # => [{0, 0}, {0, 1}, {1, 0}, {1, 1}]
+
+  ## Returns
+
+  - `{:ok, [chunk_indices]}` with list of chunk index tuples
+  - `{:error, reason}` on failure
+
+  ## Note
+
+  The order of chunks in the returned list is not guaranteed.
   """
   @spec list_chunks(t()) :: {:ok, [tuple()]} | {:error, term()}
   def list_chunks(%__MODULE__{backend: :memory, state: state}) do
@@ -244,6 +441,7 @@ defmodule ExZarr.Storage do
     }
   end
 
+  # Little-endian (< prefix)
   defp string_to_dtype("<i1"), do: :int8
   defp string_to_dtype("<i2"), do: :int16
   defp string_to_dtype("<i4"), do: :int32
@@ -254,7 +452,7 @@ defmodule ExZarr.Storage do
   defp string_to_dtype("<u8"), do: :uint64
   defp string_to_dtype("<f4"), do: :float32
   defp string_to_dtype("<f8"), do: :float64
-  # Handle big-endian variants
+  # Big-endian (> prefix)
   defp string_to_dtype(">i1"), do: :int8
   defp string_to_dtype(">i2"), do: :int16
   defp string_to_dtype(">i4"), do: :int32
@@ -265,6 +463,17 @@ defmodule ExZarr.Storage do
   defp string_to_dtype(">u8"), do: :uint64
   defp string_to_dtype(">f4"), do: :float32
   defp string_to_dtype(">f8"), do: :float64
+  # Native/platform byte order (| prefix)
+  defp string_to_dtype("|i1"), do: :int8
+  defp string_to_dtype("|i2"), do: :int16
+  defp string_to_dtype("|i4"), do: :int32
+  defp string_to_dtype("|i8"), do: :int64
+  defp string_to_dtype("|u1"), do: :uint8
+  defp string_to_dtype("|u2"), do: :uint16
+  defp string_to_dtype("|u4"), do: :uint32
+  defp string_to_dtype("|u8"), do: :uint64
+  defp string_to_dtype("|f4"), do: :float32
+  defp string_to_dtype("|f8"), do: :float64
   # Fallback for unknown formats
   defp string_to_dtype(dtype_str), do: String.to_atom(dtype_str)
 
