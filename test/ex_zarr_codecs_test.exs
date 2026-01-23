@@ -36,23 +36,14 @@ defmodule ExZarr.CodecsExtendedTest do
   end
 
   describe "Unsupported codecs" do
-    test "returns error for unsupported compression codec" do
-      assert {:error, {:unsupported_codec, :blosc}} = Codecs.compress("data", :blosc)
-    end
-
-    test "returns error for unsupported decompression codec" do
-      assert {:error, {:unsupported_codec, :blosc}} = Codecs.decompress("data", :blosc)
-    end
-
     test "returns error for invalid codec" do
       assert {:error, {:unsupported_codec, :invalid}} = Codecs.compress("data", :invalid)
       assert {:error, {:unsupported_codec, :invalid}} = Codecs.decompress("data", :invalid)
     end
   end
 
-  describe "ZSTD fallback" do
-    test "zstd uses zlib fallback" do
-      # Note: zstd falls back to zlib compression
+  describe "ZSTD codec" do
+    test "zstd compression and decompression" do
       data = "test data for zstd"
       assert {:ok, compressed} = Codecs.compress(data, :zstd)
       assert {:ok, ^data} = Codecs.decompress(compressed, :zstd)
@@ -61,14 +52,43 @@ defmodule ExZarr.CodecsExtendedTest do
     end
   end
 
-  describe "LZ4 fallback" do
-    test "lz4 uses zlib fallback" do
-      # Note: lz4 falls back to zlib compression
+  describe "LZ4 codec" do
+    test "lz4 compression and decompression" do
       data = "test data for lz4"
       assert {:ok, compressed} = Codecs.compress(data, :lz4)
       assert {:ok, ^data} = Codecs.decompress(compressed, :lz4)
       # Should compress the data
       assert byte_size(compressed) < byte_size(data) * 2
+    end
+  end
+
+  describe "Snappy codec" do
+    test "snappy compression and decompression" do
+      data = "test data for snappy"
+      assert {:ok, compressed} = Codecs.compress(data, :snappy)
+      assert {:ok, ^data} = Codecs.decompress(compressed, :snappy)
+      # Should compress the data
+      assert byte_size(compressed) < byte_size(data) * 2
+    end
+  end
+
+  describe "Blosc codec" do
+    test "blosc compression and decompression" do
+      data = "test data for blosc"
+      assert {:ok, compressed} = Codecs.compress(data, :blosc)
+      assert {:ok, ^data} = Codecs.decompress(compressed, :blosc)
+      # Should compress the data
+      assert byte_size(compressed) < byte_size(data) * 2
+    end
+  end
+
+  describe "Bzip2 codec" do
+    test "bzip2 compression and decompression" do
+      data = "test data for bzip2"
+      assert {:ok, compressed} = Codecs.compress(data, :bzip2)
+      assert {:ok, ^data} = Codecs.decompress(compressed, :bzip2)
+      # Compression may make small data larger due to overhead, so just verify round-trip works
+      assert is_binary(compressed)
     end
   end
 
@@ -81,18 +101,24 @@ defmodule ExZarr.CodecsExtendedTest do
       assert Codecs.codec_available?(:none) == true
     end
 
-    test "reports zstd as listed (but not implemented)" do
-      # zstd is in the list but not actually functional
+    test "reports zstd as available" do
       assert Codecs.codec_available?(:zstd) == true
     end
 
-    test "reports lz4 as listed (but not implemented)" do
-      # lz4 is in the list but not actually functional
+    test "reports lz4 as available" do
       assert Codecs.codec_available?(:lz4) == true
     end
 
-    test "reports blosc as unavailable" do
-      assert Codecs.codec_available?(:blosc) == false
+    test "reports snappy as available" do
+      assert Codecs.codec_available?(:snappy) == true
+    end
+
+    test "reports blosc as available" do
+      assert Codecs.codec_available?(:blosc) == true
+    end
+
+    test "reports bzip2 as available" do
+      assert Codecs.codec_available?(:bzip2) == true
     end
 
     test "reports unknown codec as unavailable" do
@@ -115,7 +141,7 @@ defmodule ExZarr.CodecsExtendedTest do
 
     test "available_codecs returns expected codecs" do
       codecs = Codecs.available_codecs()
-      assert codecs == [:none, :zlib, :zstd, :lz4]
+      assert codecs == [:none, :zlib, :zstd, :lz4, :snappy, :blosc, :bzip2]
     end
   end
 
