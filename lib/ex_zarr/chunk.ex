@@ -81,7 +81,7 @@ defmodule ExZarr.Chunk do
       |> Enum.zip(Tuple.to_list(stop_chunk))
       |> Enum.map(fn {start, stop} -> start..stop end)
 
-    cartesian_product(ranges)
+    cartesian_product_to_tuples(ranges)
   end
 
   @doc """
@@ -149,15 +149,20 @@ defmodule ExZarr.Chunk do
 
   ## Private Functions
 
-  # Generate cartesian product of ranges
+  # Generate cartesian product of ranges and convert to tuples
+  defp cartesian_product_to_tuples(ranges) do
+    cartesian_product(ranges)
+    |> Enum.map(&List.to_tuple/1)
+  end
+
+  # Generate cartesian product of ranges (returns list of lists)
   defp cartesian_product([]), do: [[]]
 
   defp cartesian_product([range | rest]) do
     rest_product = cartesian_product(rest)
 
-    for x <- range, rest <- rest_product do
-      [x | rest]
+    for x <- range, rest_item <- rest_product do
+      [x | rest_item]
     end
-    |> Enum.map(&List.to_tuple/1)
   end
 end

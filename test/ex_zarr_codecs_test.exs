@@ -51,18 +51,24 @@ defmodule ExZarr.CodecsExtendedTest do
   end
 
   describe "ZSTD fallback" do
-    test "zstd returns unsupported error" do
-      # Note: zstd/lz4 show as available but return error when used
-      assert {:error, {:unsupported_codec, :zstd}} = Codecs.compress("data", :zstd)
-      assert {:error, {:unsupported_codec, :zstd}} = Codecs.decompress("data", :zstd)
+    test "zstd uses zlib fallback" do
+      # Note: zstd falls back to zlib compression
+      data = "test data for zstd"
+      assert {:ok, compressed} = Codecs.compress(data, :zstd)
+      assert {:ok, ^data} = Codecs.decompress(compressed, :zstd)
+      # Should compress the data
+      assert byte_size(compressed) < byte_size(data) * 2
     end
   end
 
   describe "LZ4 fallback" do
-    test "lz4 returns unsupported error" do
-      # Note: zstd/lz4 show as available but return error when used
-      assert {:error, {:unsupported_codec, :lz4}} = Codecs.compress("data", :lz4)
-      assert {:error, {:unsupported_codec, :lz4}} = Codecs.decompress("data", :lz4)
+    test "lz4 uses zlib fallback" do
+      # Note: lz4 falls back to zlib compression
+      data = "test data for lz4"
+      assert {:ok, compressed} = Codecs.compress(data, :lz4)
+      assert {:ok, ^data} = Codecs.decompress(compressed, :lz4)
+      # Should compress the data
+      assert byte_size(compressed) < byte_size(data) * 2
     end
   end
 
@@ -98,7 +104,7 @@ defmodule ExZarr.CodecsExtendedTest do
   describe "Codec list completeness" do
     test "available_codecs returns non-empty list" do
       codecs = Codecs.available_codecs()
-      assert length(codecs) > 0
+      refute Enum.empty?(codecs)
     end
 
     test "available_codecs includes none and zlib" do
@@ -107,9 +113,9 @@ defmodule ExZarr.CodecsExtendedTest do
       assert :zlib in codecs
     end
 
-    test "available_codecs has expected length" do
+    test "available_codecs returns expected codecs" do
       codecs = Codecs.available_codecs()
-      assert length(codecs) == 4
+      assert codecs == [:none, :zlib, :zstd, :lz4]
     end
   end
 

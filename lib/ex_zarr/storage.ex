@@ -132,7 +132,7 @@ defmodule ExZarr.Storage do
       parsed_metadata = %ExZarr.Metadata{
         shape: List.to_tuple(metadata.shape),
         chunks: List.to_tuple(metadata.chunks),
-        dtype: String.to_atom(metadata.dtype),
+        dtype: string_to_dtype(metadata.dtype),
         compressor: parse_compressor(metadata.compressor),
         fill_value: metadata.fill_value,
         order: Map.get(metadata, :order, "C"),
@@ -243,6 +243,30 @@ defmodule ExZarr.Storage do
       level: 5
     }
   end
+
+  defp string_to_dtype("<i1"), do: :int8
+  defp string_to_dtype("<i2"), do: :int16
+  defp string_to_dtype("<i4"), do: :int32
+  defp string_to_dtype("<i8"), do: :int64
+  defp string_to_dtype("<u1"), do: :uint8
+  defp string_to_dtype("<u2"), do: :uint16
+  defp string_to_dtype("<u4"), do: :uint32
+  defp string_to_dtype("<u8"), do: :uint64
+  defp string_to_dtype("<f4"), do: :float32
+  defp string_to_dtype("<f8"), do: :float64
+  # Handle big-endian variants
+  defp string_to_dtype(">i1"), do: :int8
+  defp string_to_dtype(">i2"), do: :int16
+  defp string_to_dtype(">i4"), do: :int32
+  defp string_to_dtype(">i8"), do: :int64
+  defp string_to_dtype(">u1"), do: :uint8
+  defp string_to_dtype(">u2"), do: :uint16
+  defp string_to_dtype(">u4"), do: :uint32
+  defp string_to_dtype(">u8"), do: :uint64
+  defp string_to_dtype(">f4"), do: :float32
+  defp string_to_dtype(">f8"), do: :float64
+  # Fallback for unknown formats
+  defp string_to_dtype(dtype_str), do: String.to_atom(dtype_str)
 
   defp dtype_to_string(:int8), do: "<i1"
   defp dtype_to_string(:int16), do: "<i2"

@@ -1,6 +1,6 @@
 defmodule ExZarr.StorageTest do
   use ExUnit.Case
-  alias ExZarr.{Storage, Metadata}
+  alias ExZarr.{Metadata, Storage}
 
   @test_dir "/tmp/ex_zarr_test_#{System.unique_integer([:positive])}"
 
@@ -90,8 +90,8 @@ defmodule ExZarr.StorageTest do
       assert :ok = Storage.write_chunk(storage, {2, 3}, chunk_data)
       assert {:ok, ^chunk_data} = Storage.read_chunk(storage, {2, 3})
 
-      # Verify file exists on disk
-      chunk_path = Path.join([path, "2", "3"])
+      # Verify file exists on disk (Zarr uses dot notation: 2.3)
+      chunk_path = Path.join(path, "2.3")
       assert File.exists?(chunk_path)
     end
 
@@ -127,15 +127,15 @@ defmodule ExZarr.StorageTest do
       assert read_metadata.dtype == :int32
     end
 
-    test "handles nested chunk directories" do
+    test "handles 3D chunk indices" do
       path = Path.join(@test_dir, "array6")
       {:ok, storage} = Storage.init(%{storage_type: :filesystem, path: path})
 
-      # Write chunk with deep nesting
+      # Write chunk with 3D indexing (Zarr uses dot notation: 10.20.30)
       assert :ok = Storage.write_chunk(storage, {10, 20, 30}, "deep chunk")
       assert {:ok, "deep chunk"} = Storage.read_chunk(storage, {10, 20, 30})
 
-      chunk_path = Path.join([path, "10", "20", "30"])
+      chunk_path = Path.join(path, "10.20.30")
       assert File.exists?(chunk_path)
     end
 
@@ -156,7 +156,8 @@ defmodule ExZarr.StorageTest do
       {:ok, storage} = Storage.init(%{storage_type: :filesystem, path: path})
 
       assert :ok = Storage.write_chunk(storage, {5, 5}, "data")
-      chunk_path = Path.join([path, "5", "5"])
+      # Zarr uses dot notation for chunks
+      chunk_path = Path.join(path, "5.5")
       assert File.exists?(chunk_path)
       assert {:ok, "data"} = Storage.read_chunk(storage, {5, 5})
     end
