@@ -14,15 +14,15 @@ defmodule ExZarr.StorageTest do
     test "initializes memory storage" do
       assert {:ok, storage} = Storage.init(%{storage_type: :memory})
       assert storage.backend == :memory
-      assert storage.state.chunks == %{}
+      assert is_pid(storage.state.agent)
     end
 
     test "writes and reads chunks in memory" do
       {:ok, storage} = Storage.init(%{storage_type: :memory})
       chunk_data = "test chunk data"
 
-      {:ok, updated_storage} = Storage.write_chunk(storage, {0, 0}, chunk_data)
-      assert {:ok, ^chunk_data} = Storage.read_chunk(updated_storage, {0, 0})
+      :ok = Storage.write_chunk(storage, {0, 0}, chunk_data)
+      assert {:ok, ^chunk_data} = Storage.read_chunk(storage, {0, 0})
     end
 
     test "returns error for missing chunk in memory" do
@@ -43,8 +43,8 @@ defmodule ExZarr.StorageTest do
         zarr_format: 2
       }
 
-      {:ok, updated_storage} = Storage.write_metadata(storage, metadata, [])
-      assert {:ok, read_metadata} = Storage.read_metadata(updated_storage)
+      :ok = Storage.write_metadata(storage, metadata, [])
+      assert {:ok, read_metadata} = Storage.read_metadata(storage)
       assert read_metadata.shape == {100, 100}
       assert read_metadata.chunks == {10, 10}
     end
@@ -52,9 +52,9 @@ defmodule ExZarr.StorageTest do
     test "lists chunks in memory storage" do
       {:ok, storage} = Storage.init(%{storage_type: :memory})
 
-      {:ok, storage} = Storage.write_chunk(storage, {0, 0}, "data1")
-      {:ok, storage} = Storage.write_chunk(storage, {0, 1}, "data2")
-      {:ok, storage} = Storage.write_chunk(storage, {1, 0}, "data3")
+      :ok = Storage.write_chunk(storage, {0, 0}, "data1")
+      :ok = Storage.write_chunk(storage, {0, 1}, "data2")
+      :ok = Storage.write_chunk(storage, {1, 0}, "data3")
 
       assert {:ok, chunks} = Storage.list_chunks(storage)
       assert length(chunks) == 3

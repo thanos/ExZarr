@@ -85,10 +85,13 @@ defmodule ExZarr.Storage do
   """
   @spec init(map()) :: {:ok, t()} | {:error, term()}
   def init(%{storage_type: :memory} = _config) do
+    # Use Agent for mutable state
+    {:ok, agent} = Agent.start_link(fn -> %{chunks: %{}, metadata: nil} end)
+
     {:ok,
      %__MODULE__{
        backend: :memory,
-       state: %{chunks: %{}, metadata: nil}
+       state: %{agent: agent}
      }}
   end
 
@@ -183,11 +186,13 @@ defmodule ExZarr.Storage do
   - `{:error, reason}` for other failures
   """
   @spec read_chunk(t(), tuple()) :: {:ok, binary()} | {:error, term()}
-  def read_chunk(%__MODULE__{backend: :memory, state: state}, chunk_index) do
-    case Map.get(state.chunks, chunk_index) do
-      nil -> {:error, :not_found}
-      data -> {:ok, data}
-    end
+  def read_chunk(%__MODULE__{backend: :memory, state: %{agent: agent}}, chunk_index) do
+    Agent.get(agent, fn state ->
+      case Map.get(state.chunks, chunk_index) do
+        nil -> {:error, :not_found}
+        data -> {:ok, data}
+      end
+    end)
   end
 
   def read_chunk(%__MODULE__{backend: :filesystem, path: path}, chunk_index) do
@@ -228,12 +233,13 @@ defmodule ExZarr.Storage do
   - `{:error, reason}` on failure
   """
   @spec write_chunk(t(), tuple(), binary()) :: :ok | {:error, term()}
-  def write_chunk(%__MODULE__{backend: :memory, state: state} = storage, chunk_index, data) do
-    new_chunks = Map.put(state.chunks, chunk_index, data)
-    new_state = Map.put(state, :chunks, new_chunks)
-    # Note: In real implementation, we'd need to update the storage reference
-    # This is a simplified version
-    {:ok, %{storage | state: new_state}}
+  def write_chunk(%__MODULE__{backend: :memory, state: %{agent: agent}}, chunk_index, data) do
+    Agent.update(agent, fn state ->
+      new_chunks = Map.put(state.chunks, chunk_index, data)
+      %{state | chunks: new_chunks}
+    end)
+
+    :ok
   end
 
   def write_chunk(%__MODULE__{backend: :filesystem, path: path}, chunk_index, data) do
@@ -266,11 +272,13 @@ defmodule ExZarr.Storage do
   - `{:error, reason}` for other failures
   """
   @spec read_metadata(t()) :: {:ok, map()} | {:error, term()}
-  def read_metadata(%__MODULE__{backend: :memory, state: state}) do
-    case Map.get(state, :metadata) do
-      nil -> {:error, :metadata_not_found}
-      metadata -> {:ok, metadata}
-    end
+  def read_metadata(%__MODULE__{backend: :memory, state: %{agent: agent}}) do
+    Agent.get(agent, fn state ->
+      case Map.get(state, :metadata) do
+        nil -> {:error, :metadata_not_found}
+        metadata -> {:ok, metadata}
+      end
+    end)
   end
 
   def read_metadata(%__MODULE__{backend: :filesystem, path: path}) do
@@ -329,9 +337,12 @@ defmodule ExZarr.Storage do
   - `{:error, reason}` on failure
   """
   @spec write_metadata(t(), ExZarr.Metadata.t(), keyword()) :: :ok | {:error, term()}
-  def write_metadata(%__MODULE__{backend: :memory, state: state} = storage, metadata, _opts) do
-    new_state = Map.put(state, :metadata, metadata)
-    {:ok, %{storage | state: new_state}}
+  def write_metadata(%__MODULE__{backend: :memory, state: %{agent: agent}}, metadata, _opts) do
+    Agent.update(agent, fn state ->
+      %{state | metadata: metadata}
+    end)
+
+    :ok
   end
 
   def write_metadata(%__MODULE__{backend: :filesystem, path: path}, metadata, _opts) do
@@ -375,8 +386,10 @@ defmodule ExZarr.Storage do
   The order of chunks in the returned list is not guaranteed.
   """
   @spec list_chunks(t()) :: {:ok, [tuple()]} | {:error, term()}
-  def list_chunks(%__MODULE__{backend: :memory, state: state}) do
-    {:ok, Map.keys(state.chunks)}
+  def list_chunks(%__MODULE__{backend: :memory, state: %{agent: agent}}) do
+    Agent.get(agent, fn state ->
+      {:ok, Map.keys(state.chunks)}
+    end)
   end
 
   def list_chunks(%__MODULE__{backend: :filesystem, path: path}) do
