@@ -42,6 +42,7 @@ defmodule ExZarr.MixProject do
 
   def application do
     [
+      mod: {ExZarr.Application, []},
       extra_applications: [:logger, :crypto]
     ]
   end

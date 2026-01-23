@@ -226,7 +226,8 @@ defmodule ExZarr.CodecsExtendedTest do
 
     test "available_codecs returns expected codecs" do
       codecs = Codecs.available_codecs()
-      assert codecs == [:none, :zlib, :crc32c, :zstd, :lz4, :snappy, :blosc, :bzip2]
+      expected = [:none, :zlib, :crc32c, :zstd, :lz4, :snappy, :blosc, :bzip2]
+      assert Enum.sort(codecs) == Enum.sort(expected)
     end
   end
 
