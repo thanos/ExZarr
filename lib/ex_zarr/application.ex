@@ -2,7 +2,7 @@ defmodule ExZarr.Application do
   @moduledoc """
   ExZarr application module.
 
-  Starts the supervision tree including the codec registry.
+  Starts the supervision tree including the codec and storage registries.
   """
   use Application
 
@@ -14,7 +14,9 @@ defmodule ExZarr.Application do
 
     children = [
       # Codec registry for managing built-in and custom codecs
-      {ExZarr.Codecs.Registry, []}
+      {ExZarr.Codecs.Registry, []},
+      # Storage backend registry for managing built-in and custom storage backends
+      {ExZarr.Storage.Registry, []}
     ]
 
     opts = [strategy: :one_for_one, name: ExZarr.Supervisor]

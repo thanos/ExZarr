@@ -9,8 +9,11 @@ defmodule ExZarr do
 
   - N-dimensional arrays with 10 data types (int8-64, uint8-64, float32/64)
   - Chunking along arbitrary dimensions for efficient I/O
-  - Compression using Erlang zlib (with zstd/lz4 fallbacks)
-  - Flexible storage backends (in-memory and filesystem)
+  - Compression using Erlang zlib (with zstd/lz4/snappy/blosc fallbacks)
+  - Filter pipeline for pre-compression transformations (Delta, Quantize, Shuffle, etc.)
+  - Flexible storage backends (in-memory, filesystem, and zip archive)
+  - Custom storage backend plugin system (for S3, databases, cloud storage)
+  - Custom codec plugin system for compression and transformation
   - Hierarchical organization with groups
   - Compatible with Zarr v2 specification
   - **Full interoperability with Python's zarr library**
@@ -76,9 +79,13 @@ defmodule ExZarr do
 
   ## Storage
 
-  Two storage backends are available:
+  Three built-in storage backends are available:
   - `:memory` - Fast, non-persistent in-memory storage
   - `:filesystem` - Persistent storage using Zarr v2 directory structure
+  - `:zip` - Single-file zip archive storage (portable, easy to distribute)
+
+  Custom storage backends can be implemented using the `ExZarr.Storage.Backend`
+  behavior for S3, databases, cloud storage, and other storage systems.
 
   ## Testing
 
