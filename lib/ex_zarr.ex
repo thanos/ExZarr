@@ -31,7 +31,7 @@ defmodule ExZarr do
       {:ok, data} = ExZarr.Array.get_slice(array, start: {0, 0}, stop: {100, 100})
   """
 
-  alias ExZarr.{Array, Group, Storage}
+  alias ExZarr.Array
 
   @type shape :: tuple()
   @type chunks :: tuple()

@@ -20,7 +20,7 @@ defmodule ExZarr.Group do
       )
   """
 
-  alias ExZarr.{Array, Storage, Metadata}
+  alias ExZarr.{Array, Storage}
 
   @type t :: %__MODULE__{
           path: String.t(),
@@ -112,7 +112,7 @@ defmodule ExZarr.Group do
       |> Keyword.put(:path, array_path)
 
     with {:ok, array} <- Array.create(array_opts) do
-      updated_group = %{group | arrays: Map.put(group.arrays, name, array)}
+      _updated_group = %{group | arrays: Map.put(group.arrays, name, array)}
       {:ok, array}
     end
   end
@@ -134,7 +134,7 @@ defmodule ExZarr.Group do
       |> Keyword.put_new(:path, subgroup_path)
 
     with {:ok, subgroup} <- create(subgroup_path, opts) do
-      updated_parent = %{parent_group | groups: Map.put(parent_group.groups, name, subgroup)}
+      _updated_parent = %{parent_group | groups: Map.put(parent_group.groups, name, subgroup)}
       {:ok, subgroup}
     end
   end
@@ -219,15 +219,14 @@ defmodule ExZarr.Group do
 
   defp read_group_metadata(storage, group_path) do
     case storage.backend do
-      :memory ->
-        {:ok, %{zarr_format: 2}}
+      # :memory ->
+      #   {:ok, %{zarr_format: 2}}
 
       :filesystem ->
         group_file = Path.join([storage.path, group_path, ".zgroup"])
 
-        with {:ok, json} <- File.read(group_file),
-             {:ok, metadata} <- Jason.decode(json, keys: :atoms) do
-          {:ok, metadata}
+        with {:ok, json} <- File.read(group_file) do
+          Jason.decode(json, keys: :atoms)
         end
     end
   end

@@ -2,7 +2,7 @@ defmodule ExZarrTest do
   use ExUnit.Case
   doctest ExZarr
 
-  alias ExZarr.{Array, Group, Codecs, Chunk, Metadata}
+  alias ExZarr.{Array, Chunk, Codecs, Group, Metadata}
 
   describe "Array creation" do
     test "creates an array with valid configuration" do

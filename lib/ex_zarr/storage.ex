@@ -107,9 +107,8 @@ defmodule ExZarr.Storage do
     chunk_path = build_chunk_path(path, chunk_index)
     chunk_dir = Path.dirname(chunk_path)
 
-    with :ok <- ensure_directory(chunk_dir),
-         :ok <- File.write(chunk_path, data) do
-      :ok
+    with :ok <- ensure_directory(chunk_dir) do
+      File.write(chunk_path, data)
     end
   end
 
@@ -170,9 +169,8 @@ defmodule ExZarr.Storage do
       filters: nil
     }
 
-    with {:ok, json} <- Jason.encode(metadata_json, pretty: true),
-         :ok <- File.write(metadata_path, json) do
-      :ok
+    with {:ok, json} <- Jason.encode(metadata_json, pretty: true) do
+      File.write(metadata_path, json)
     end
   end
 
@@ -238,6 +236,7 @@ defmodule ExZarr.Storage do
   defp parse_compressor(_), do: :none
 
   defp compressor_to_json(:none), do: nil
+
   defp compressor_to_json(compressor) when is_atom(compressor) do
     %{
       id: Atom.to_string(compressor),

@@ -10,7 +10,12 @@ defmodule ExZarr.Array do
   """
 
   use GenServer
-  alias ExZarr.{Codecs, Storage, Metadata, Chunk}
+  alias ExZarr.{Codecs, Metadata, Storage}
+
+  @impl GenServer
+  def init(init_arg) do
+    {:ok, init_arg}
+  end
 
   @type t :: %__MODULE__{
           shape: tuple(),
@@ -42,7 +47,9 @@ defmodule ExZarr.Array do
     with {:ok, config} <- validate_config(opts),
          {:ok, storage} <- Storage.init(config),
          {:ok, metadata} <- Metadata.create(config) do
-      array = struct(__MODULE__, Map.put(config, :storage, storage) |> Map.put(:metadata, metadata))
+      array =
+        struct(__MODULE__, Map.put(config, :storage, storage) |> Map.put(:metadata, metadata))
+
       {:ok, array}
     end
   end
@@ -92,9 +99,8 @@ defmodule ExZarr.Array do
     stop = Keyword.get(opts, :stop, array.shape)
 
     with {:ok, chunk_indices} <- calculate_chunk_indices(array, start, stop),
-         {:ok, chunks} <- read_chunks(array, chunk_indices),
-         {:ok, data} <- assemble_slice(array, chunks, start, stop) do
-      {:ok, data}
+         {:ok, chunks} <- read_chunks(array, chunk_indices) do
+      assemble_slice(array, chunks, start, stop)
     end
   end
 
@@ -110,9 +116,8 @@ defmodule ExZarr.Array do
     start = Keyword.get(opts, :start, tuple_of_zeros(array.shape))
 
     with {:ok, chunk_indices} <- calculate_chunk_indices_for_write(array, data, start),
-         {:ok, chunks} <- split_into_chunks(array, data, start),
-         :ok <- write_chunks(array, chunks, chunk_indices) do
-      :ok
+         {:ok, chunks} <- split_into_chunks(array, data, start) do
+      write_chunks(array, chunks, chunk_indices)
     end
   end
 
@@ -168,6 +173,7 @@ defmodule ExZarr.Array do
   end
 
   defp validate_shape(nil), do: {:error, :shape_required}
+
   defp validate_shape(shape) when is_tuple(shape) and tuple_size(shape) > 0 do
     if Enum.all?(Tuple.to_list(shape), &(is_integer(&1) and &1 > 0)) do
       {:ok, shape}
@@ -175,9 +181,11 @@ defmodule ExZarr.Array do
       {:error, :invalid_shape}
     end
   end
+
   defp validate_shape(_), do: {:error, :invalid_shape}
 
   defp validate_chunks(nil, _shape), do: {:error, :chunks_required}
+
   defp validate_chunks(chunks, shape) when is_tuple(chunks) do
     if tuple_size(chunks) == tuple_size(shape) and
          Enum.all?(Tuple.to_list(chunks), &(is_integer(&1) and &1 > 0)) do
@@ -186,10 +194,12 @@ defmodule ExZarr.Array do
       {:error, :invalid_chunks}
     end
   end
+
   defp validate_chunks(_, _), do: {:error, :invalid_chunks}
 
   defp tuple_of_zeros(shape) do
     size = tuple_size(shape)
+
     0
     |> List.duplicate(size)
     |> List.to_tuple()
@@ -261,7 +271,7 @@ defmodule ExZarr.Array do
       |> Tuple.to_list()
       |> Enum.reduce(1, &(&1 * &2))
 
-    element_size = dtype_size(array.dtype)
+    _element_size = dtype_size(array.dtype)
     fill_bytes = encode_fill_value(array.fill_value, array.dtype)
 
     List.duplicate(fill_bytes, chunk_size)
