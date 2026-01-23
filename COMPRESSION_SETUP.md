@@ -4,6 +4,8 @@ ExZarr includes Zig NIFs that bind to C compression libraries for high-performan
 
 ## Available Codecs
 
+### Compression Codecs
+
 - **:none** - No compression (always available)
 - **:zlib** - Zlib compression via Erlang's built-in `:zlib` (always available)
 - **:zstd** - Zstandard compression via libzstd (requires system library)
@@ -11,6 +13,10 @@ ExZarr includes Zig NIFs that bind to C compression libraries for high-performan
 - **:snappy** - Snappy compression via libsnappy (requires system library)
 - **:blosc** - Blosc meta-compressor via libblosc (requires system library)
 - **:bzip2** - Bzip2 compression via libbz2 (requires system library)
+
+### Checksum Codecs
+
+- **:crc32c** - CRC32C checksum codec for data integrity (always available, pure Zig implementation)
 
 ## Installation
 
@@ -144,6 +150,11 @@ data = "Hello, World!"
 {:ok, lz4_compressed} = ExZarr.Codecs.compress(data, :lz4)
 {:ok, blosc_compressed} = ExZarr.Codecs.compress(data, :blosc, level: 5)
 {:ok, bzip2_compressed} = ExZarr.Codecs.compress(data, :bzip2, level: 9)
+
+# CRC32C checksum (adds 4-byte checksum for data integrity)
+{:ok, checksummed} = ExZarr.Codecs.compress(data, :crc32c)
+{:ok, validated} = ExZarr.Codecs.decompress(checksummed, :crc32c)
+# Will return {:error, {:checksum_validation_failed, :crc32c_checksum_mismatch}} if corrupted
 ```
 
 ### Use with Zarr Arrays
@@ -218,17 +229,21 @@ If compression returns an error:
 
 Typical compression ratios and speeds (on text data):
 
-| Codec  | Compression Ratio | Speed   | Best For                  |
-|--------|------------------|---------|---------------------------|
-| none   | 1.0x             | Fastest | Already compressed data   |
-| snappy | 2-3x             | Very Fast | Real-time compression   |
-| lz4    | 2-3x             | Very Fast | Real-time compression   |
-| zlib   | 3-5x             | Medium  | General purpose (default) |
-| zstd   | 3-7x             | Fast    | Best ratio/speed tradeoff |
-| blosc  | 2-10x            | Fast    | Numerical/scientific data |
-| bzip2  | 4-8x             | Slow    | Maximum compression       |
+| Codec   | Compression Ratio | Speed     | Best For                  | Overhead |
+|---------|------------------|-----------|---------------------------|----------|
+| none    | 1.0x             | Fastest   | Already compressed data   | 0 bytes  |
+| snappy  | 2-3x             | Very Fast | Real-time compression     | Varies   |
+| lz4     | 2-3x             | Very Fast | Real-time compression     | Varies   |
+| zlib    | 3-5x             | Medium    | General purpose (default) | Varies   |
+| zstd    | 3-7x             | Fast      | Best ratio/speed tradeoff | Varies   |
+| blosc   | 2-10x            | Fast      | Numerical/scientific data | Varies   |
+| bzip2   | 4-8x             | Slow      | Maximum compression       | Varies   |
+| crc32c  | 1.0x (no compression) | Very Fast | Data integrity checking | 4 bytes  |
 
-**Recommendation:** Use `:zstd` for most cases - it provides excellent compression with good speed.
+**Recommendations:**
+- Use `:zstd` for most cases - excellent compression with good speed
+- Use `:crc32c` when you need data integrity validation without compression
+- Combine codecs in a pipeline for both compression and integrity (e.g., zstd + crc32c)
 
 ## Development Setup Script
 

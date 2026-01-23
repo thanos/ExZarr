@@ -1,5 +1,6 @@
 defmodule ExZarr.CodecsExtendedTest do
   use ExUnit.Case
+  import Bitwise
   alias ExZarr.Codecs
 
   describe "Compression edge cases" do
@@ -92,6 +93,86 @@ defmodule ExZarr.CodecsExtendedTest do
     end
   end
 
+  describe "CRC32C codec" do
+    test "crc32c encoding and validation" do
+      data = "Hello, World!"
+      assert {:ok, encoded} = Codecs.compress(data, :crc32c)
+      # Should add 4-byte checksum
+      assert byte_size(encoded) == byte_size(data) + 4
+      assert {:ok, ^data} = Codecs.decompress(encoded, :crc32c)
+    end
+
+    test "crc32c detects corruption" do
+      data = "Hello, World!"
+      {:ok, encoded} = Codecs.compress(data, :crc32c)
+
+      # Corrupt the checksum
+      <<prefix::binary-size(byte_size(data)), _checksum::binary>> = encoded
+      corrupted = prefix <> <<0, 0, 0, 0>>
+
+      assert {:error, {:checksum_validation_failed, :crc32c_checksum_mismatch}} =
+        Codecs.decompress(corrupted, :crc32c)
+    end
+
+    test "crc32c detects data corruption" do
+      data = "Hello, World!"
+      {:ok, encoded} = Codecs.compress(data, :crc32c)
+
+      # Corrupt the data (flip a bit)
+      <<first_byte, rest::binary>> = encoded
+      corrupted = <<bxor(first_byte, 1), rest::binary>>
+
+      assert {:error, {:checksum_validation_failed, :crc32c_checksum_mismatch}} =
+        Codecs.decompress(corrupted, :crc32c)
+    end
+
+    test "crc32c with empty data" do
+      data = ""
+      assert {:ok, encoded} = Codecs.compress(data, :crc32c)
+      assert byte_size(encoded) == 4  # Just the checksum
+      assert {:ok, ^data} = Codecs.decompress(encoded, :crc32c)
+    end
+
+    test "crc32c with large data" do
+      data = String.duplicate("ExZarr is awesome! ", 10000)
+      assert {:ok, encoded} = Codecs.compress(data, :crc32c)
+      assert byte_size(encoded) == byte_size(data) + 4
+      assert {:ok, ^data} = Codecs.decompress(encoded, :crc32c)
+    end
+
+    test "crc32c with binary data" do
+      data = :crypto.strong_rand_bytes(1000)
+      assert {:ok, encoded} = Codecs.compress(data, :crc32c)
+      assert byte_size(encoded) == 1004
+      assert {:ok, ^data} = Codecs.decompress(encoded, :crc32c)
+    end
+
+    test "crc32c rejects too-short data" do
+      # Data must be at least 4 bytes (for checksum)
+      short_data = <<1, 2, 3>>
+      assert {:error, {:checksum_validation_failed, :crc32c_invalid_data}} =
+        Codecs.decompress(short_data, :crc32c)
+    end
+
+    test "crc32c is deterministic" do
+      data = "Same input, same checksum!"
+      {:ok, encoded1} = Codecs.compress(data, :crc32c)
+      {:ok, encoded2} = Codecs.compress(data, :crc32c)
+      assert encoded1 == encoded2
+    end
+
+    test "crc32c different data produces different checksums" do
+      {:ok, encoded1} = Codecs.compress("Data A", :crc32c)
+      {:ok, encoded2} = Codecs.compress("Data B", :crc32c)
+
+      # Extract checksums
+      checksum1 = binary_part(encoded1, byte_size("Data A"), 4)
+      checksum2 = binary_part(encoded2, byte_size("Data B"), 4)
+
+      assert checksum1 != checksum2
+    end
+  end
+
   describe "Codec availability checking" do
     test "reports zlib as available" do
       assert Codecs.codec_available?(:zlib) == true
@@ -121,6 +202,10 @@ defmodule ExZarr.CodecsExtendedTest do
       assert Codecs.codec_available?(:bzip2) == true
     end
 
+    test "reports crc32c as available" do
+      assert Codecs.codec_available?(:crc32c) == true
+    end
+
     test "reports unknown codec as unavailable" do
       assert Codecs.codec_available?(:unknown) == false
       assert Codecs.codec_available?(:random) == false
@@ -141,7 +226,7 @@ defmodule ExZarr.CodecsExtendedTest do
 
     test "available_codecs returns expected codecs" do
       codecs = Codecs.available_codecs()
-      assert codecs == [:none, :zlib, :zstd, :lz4, :snappy, :blosc, :bzip2]
+      assert codecs == [:none, :zlib, :crc32c, :zstd, :lz4, :snappy, :blosc, :bzip2]
     end
   end
 

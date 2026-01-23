@@ -12,6 +12,7 @@ defmodule ExZarr.Codecs do
   - `:snappy` - Snappy compression using `snappyer` (optional dependency)
   - `:blosc` - Blosc meta-compressor using Zig NIF (optional)
   - `:bzip2` - Bzip2 compression using Zig NIF (optional)
+  - `:crc32c` - CRC32C checksum codec (bytes-to-bytes, adds 4-byte checksum)
 
   ## Compression Performance
 
@@ -25,6 +26,7 @@ defmodule ExZarr.Codecs do
   - `:zstd` - Best compression ratio, fast decompression, configurable levels
   - `:blosc` - Meta-compressor with SIMD acceleration, excellent for numerical data
   - `:bzip2` - High compression ratio, slower speed
+  - `:crc32c` - Checksum codec for data integrity (not compression, adds 4-byte overhead)
 
   ## Optional Dependencies
 
@@ -55,14 +57,18 @@ defmodule ExZarr.Codecs do
       # Use blosc (excellent for numerical data)
       {:ok, compressed} = ExZarr.Codecs.compress(float_data, :blosc, level: 9)
 
+      # Use CRC32C checksum (adds 4-byte checksum for data integrity)
+      {:ok, checksummed} = ExZarr.Codecs.compress(data, :crc32c)
+
       # No compression
       {:ok, data} = ExZarr.Codecs.compress("hello", :none)
       # data == "hello"
 
       # Check codec availability
-      ExZarr.Codecs.codec_available?(:zlib)  # => true (always)
-      ExZarr.Codecs.codec_available?(:zstd)  # => true if libzstd is installed
-      ExZarr.Codecs.codec_available?(:blosc) # => true if libblosc is installed
+      ExZarr.Codecs.codec_available?(:zlib)   # => true (always)
+      ExZarr.Codecs.codec_available?(:zstd)   # => true if libzstd is installed
+      ExZarr.Codecs.codec_available?(:blosc)  # => true if libblosc is installed
+      ExZarr.Codecs.codec_available?(:crc32c) # => true (always available)
 
   ## Compatibility Notes
 
@@ -75,7 +81,7 @@ defmodule ExZarr.Codecs do
 
   alias ExZarr.Codecs.ZigCodecs
 
-  @type codec :: :none | :zlib | :zstd | :lz4 | :snappy | :blosc | :bzip2
+  @type codec :: :none | :zlib | :zstd | :lz4 | :snappy | :blosc | :bzip2 | :crc32c
 
   @doc """
   Compresses data using the specified codec.
@@ -87,7 +93,7 @@ defmodule ExZarr.Codecs do
   ## Parameters
 
   - `data` - Binary data to compress
-  - `codec` - Compression codec (`:none`, `:zlib`, `:zstd`, `:lz4`, `:snappy`, `:blosc`, or `:bzip2`)
+  - `codec` - Compression codec (`:none`, `:zlib`, `:zstd`, `:lz4`, `:snappy`, `:blosc`, `:bzip2`, or `:crc32c`)
   - `opts` - Optional keyword list with compression options:
     - `:level` - Compression level (codec-specific, typically 1-9)
 
@@ -182,6 +188,18 @@ defmodule ExZarr.Codecs do
     e -> {:error, {:compression_failed, e}}
   end
 
+  def compress(data, :crc32c, _opts) when is_binary(data) do
+    # CRC32C is a checksum codec, not compression
+    # Appends 4-byte CRC32C checksum to data
+    case ZigCodecs.crc32c_encode(data) do
+      {:ok, checksummed} -> {:ok, checksummed}
+      checksummed when is_binary(checksummed) -> {:ok, checksummed}
+      {:error, reason} -> {:error, {:checksum_failed, reason}}
+    end
+  rescue
+    e -> {:error, {:checksum_failed, e}}
+  end
+
   def compress(_data, codec, _opts), do: {:error, {:unsupported_codec, codec}}
 
   @doc """
@@ -194,7 +212,7 @@ defmodule ExZarr.Codecs do
   ## Parameters
 
   - `data` - Compressed binary data
-  - `codec` - Compression codec (`:none`, `:zlib`, `:zstd`, `:lz4`, `:snappy`, `:blosc`, or `:bzip2`)
+  - `codec` - Compression codec (`:none`, `:zlib`, `:zstd`, `:lz4`, `:snappy`, `:blosc`, `:bzip2`, or `:crc32c`)
 
   ## Examples
 
@@ -298,6 +316,18 @@ defmodule ExZarr.Codecs do
     e -> {:error, {:decompression_failed, e}}
   end
 
+  def decompress(data, :crc32c) when is_binary(data) do
+    # CRC32C is a checksum codec
+    # Validates and removes 4-byte CRC32C checksum from end of data
+    case ZigCodecs.crc32c_decode(data) do
+      {:ok, validated} -> {:ok, validated}
+      validated when is_binary(validated) -> {:ok, validated}
+      {:error, reason} -> {:error, {:checksum_validation_failed, reason}}
+    end
+  rescue
+    e -> {:error, {:checksum_validation_failed, e}}
+  end
+
   def decompress(_data, codec), do: {:error, {:unsupported_codec, codec}}
 
   @doc """
@@ -319,7 +349,7 @@ defmodule ExZarr.Codecs do
   """
   @spec available_codecs() :: [codec(), ...]
   def available_codecs do
-    base = [:none, :zlib]
+    base = [:none, :zlib, :crc32c]
 
     # Check which Zig NIF codecs are available
     optional = [:zstd, :lz4, :snappy, :blosc, :bzip2]
@@ -359,6 +389,7 @@ defmodule ExZarr.Codecs do
   @spec codec_available?(codec()) :: boolean()
   def codec_available?(:none), do: true
   def codec_available?(:zlib), do: true
+  def codec_available?(:crc32c), do: true
 
   def codec_available?(codec) when codec in [:zstd, :lz4, :snappy, :blosc, :bzip2] do
     nif_codec_available?(codec)
@@ -403,6 +434,14 @@ defmodule ExZarr.Codecs do
 
       :bzip2 ->
         case ZigCodecs.bzip2_compress(test_data, 1) do
+          bin when is_binary(bin) -> true
+          {:ok, _} -> true
+          _ -> false
+        end
+
+      :crc32c ->
+        # CRC32C is always available (pure Zig implementation)
+        case ZigCodecs.crc32c_encode(test_data) do
           bin when is_binary(bin) -> true
           {:ok, _} -> true
           _ -> false
