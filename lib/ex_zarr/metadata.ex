@@ -73,7 +73,7 @@ defmodule ExZarr.Metadata do
 
   ## Parameters
 
-  - `config` - Map with keys `:shape`, `:chunks`, `:dtype`, `:compressor`, `:fill_value`
+  - `config` - Map with keys `:shape`, `:chunks`, `:dtype`, `:compressor`, `:fill_value`, and optionally `:filters`
 
   ## Examples
 
@@ -83,6 +83,16 @@ defmodule ExZarr.Metadata do
         dtype: :float64,
         compressor: :zlib,
         fill_value: 0.0
+      }
+      {:ok, metadata} = ExZarr.Metadata.create(config)
+
+      # With filters
+      config = %{
+        shape: {1000},
+        chunks: {100},
+        dtype: :int64,
+        compressor: :zlib,
+        filters: [{:delta, [dtype: :int64]}]
       }
       {:ok, metadata} = ExZarr.Metadata.create(config)
 
@@ -100,7 +110,7 @@ defmodule ExZarr.Metadata do
       fill_value: config.fill_value,
       order: Map.get(config, :order, "C"),
       zarr_format: 2,
-      filters: nil
+      filters: Map.get(config, :filters, nil)
     }
 
     {:ok, metadata}
@@ -122,9 +132,18 @@ defmodule ExZarr.Metadata do
   - `{:error, :invalid_shape}` if shape is empty
   - `{:error, :chunks_shape_mismatch}` if chunks and shape have different dimensions
   - `{:error, :unsupported_zarr_format}` if zarr_format is not 2
+  - `{:error, {:invalid_filter_config, filter_id, reason}}` if a filter configuration is invalid
+  - `{:error, {:unknown_filter, filter_id}}` if a filter is not registered
+  - `{:error, :invalid_filter_format}` if filters list is malformed
   """
   @spec validate(t()) :: :ok | {:error, term()}
   def validate(%__MODULE__{} = metadata) do
+    with :ok <- validate_structure(metadata) do
+      validate_filters(metadata.filters)
+    end
+  end
+
+  defp validate_structure(metadata) do
     cond do
       tuple_size(metadata.shape) == 0 ->
         {:error, :invalid_shape}
@@ -139,6 +158,61 @@ defmodule ExZarr.Metadata do
         :ok
     end
   end
+
+  defp validate_filters(nil), do: :ok
+  defp validate_filters([]), do: :ok
+
+  defp validate_filters(filters) when is_list(filters) do
+    Enum.reduce_while(filters, :ok, fn filter_spec, :ok ->
+      case validate_filter_spec(filter_spec) do
+        :ok -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp validate_filters(_), do: {:error, :invalid_filter_format}
+
+  defp validate_filter_spec({filter_id, opts})
+       when is_atom(filter_id) and is_list(opts) do
+    case ExZarr.Codecs.Registry.get(filter_id) do
+      {:ok, :builtin_delta} ->
+        :ok
+
+      {:ok, :builtin_quantize} ->
+        :ok
+
+      {:ok, :builtin_shuffle} ->
+        :ok
+
+      {:ok, :builtin_fixedscaleoffset} ->
+        :ok
+
+      {:ok, :builtin_astype} ->
+        :ok
+
+      {:ok, :builtin_packbits} ->
+        :ok
+
+      {:ok, :builtin_categorize} ->
+        :ok
+
+      {:ok, :builtin_bitround} ->
+        :ok
+
+      {:ok, module} when is_atom(module) ->
+        # Custom filter - validate config using module's callback
+        case module.validate_config(opts) do
+          :ok -> :ok
+          {:error, reason} -> {:error, {:invalid_filter_config, filter_id, reason}}
+        end
+
+      {:error, :not_found} ->
+        {:error, {:unknown_filter, filter_id}}
+    end
+  end
+
+  defp validate_filter_spec(_), do: {:error, :invalid_filter_format}
 
   @doc """
   Returns the number of chunks along each dimension.

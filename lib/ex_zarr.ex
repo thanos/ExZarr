@@ -9,8 +9,11 @@ defmodule ExZarr do
 
   - N-dimensional arrays with 10 data types (int8-64, uint8-64, float32/64)
   - Chunking along arbitrary dimensions for efficient I/O
-  - Compression using Erlang zlib (with zstd/lz4 fallbacks)
-  - Flexible storage backends (in-memory and filesystem)
+  - Compression using Erlang zlib (with zstd/lz4/snappy/blosc fallbacks)
+  - Filter pipeline for pre-compression transformations (Delta, Quantize, Shuffle, etc.)
+  - Flexible storage backends (in-memory, filesystem, and zip archive)
+  - Custom storage backend plugin system (for S3, databases, cloud storage)
+  - Custom codec plugin system for compression and transformation
   - Hierarchical organization with groups
   - Compatible with Zarr v2 specification
   - **Full interoperability with Python's zarr library**
@@ -76,9 +79,13 @@ defmodule ExZarr do
 
   ## Storage
 
-  Two storage backends are available:
+  Three built-in storage backends are available:
   - `:memory` - Fast, non-persistent in-memory storage
   - `:filesystem` - Persistent storage using Zarr v2 directory structure
+  - `:zip` - Single-file zip archive storage (portable, easy to distribute)
+
+  Custom storage backends can be implemented using the `ExZarr.Storage.Backend`
+  behavior for S3, databases, cloud storage, and other storage systems.
 
   ## Testing
 
@@ -121,6 +128,9 @@ defmodule ExZarr do
   - `:dtype` - Data type (default: `:float64`). One of: `:int8`, `:int16`, `:int32`, `:int64`,
     `:uint8`, `:uint16`, `:uint32`, `:uint64`, `:float32`, `:float64`.
   - `:compressor` - Compression codec (default: `:zstd`). One of: `:none`, `:zlib`, `:zstd`, `:lz4`.
+  - `:filters` - List of filter tuples to apply before compression (default: `nil`).
+    Filters are transformation codecs that pre-process data to improve compression.
+    Format: `[{:filter_id, [opt: value, ...]}]`
   - `:storage` - Storage backend (default: `:memory`). Either `:memory` or `:filesystem`.
   - `:path` - Path for filesystem storage (required if `:storage` is `:filesystem`).
   - `:fill_value` - Fill value for uninitialized chunks (default: `0`).
@@ -152,6 +162,27 @@ defmodule ExZarr do
         fill_value: 255
       )
 
+      # Create array with Delta filter for sequential data
+      {:ok, array} = ExZarr.create(
+        shape: {10000},
+        chunks: {1000},
+        dtype: :int64,
+        filters: [{:delta, [dtype: :int64]}],
+        compressor: :zlib
+      )
+
+      # Create array with multiple filters
+      {:ok, array} = ExZarr.create(
+        shape: {1000, 1000},
+        chunks: {100, 100},
+        dtype: :float64,
+        filters: [
+          {:quantize, [digits: 2, dtype: :float64]},
+          {:shuffle, [elementsize: 8]}
+        ],
+        compressor: :zstd
+      )
+
   ## Returns
 
   - `{:ok, array}` on success
@@ -159,6 +190,8 @@ defmodule ExZarr do
   - `{:error, :chunks_required}` if chunks is missing
   - `{:error, :invalid_shape}` if shape is malformed
   - `{:error, :invalid_chunks}` if chunks is malformed or doesn't match shape
+  - `{:error, {:unknown_filter, filter_id}}` if a filter is not registered
+  - `{:error, {:invalid_filter_config, filter_id, reason}}` if filter configuration is invalid
   """
   @spec create(keyword()) :: {:ok, Array.t()} | {:error, term()}
   def create(opts) do

@@ -7,10 +7,11 @@ Elixir implementation of [Zarr](https://zarr.dev): compressed, chunked, N-dimens
 - **N-dimensional arrays** with support for 10 data types (int8-64, uint8-64, float32/64)
 - **Chunking** along arbitrary dimensions for optimized I/O operations
 - **Compression** using Erlang zlib (with fallback support for zstd and lz4)
-- **Flexible storage** backends (in-memory and filesystem)
+- **Flexible storage** backends (in-memory, filesystem, and zip archive)
+- **Custom storage backends** with plugin architecture for S3, databases, and more
 - **Hierarchical groups** for organizing multiple arrays
 - **Zarr v2 specification** compatibility for interoperability with other Zarr implementations
-- **Property-based testing** with comprehensive test coverage (72.5%)
+- **Property-based testing** with comprehensive test coverage
 
 ## Installation
 
@@ -110,6 +111,21 @@ This demonstrates:
 - Querying codec information
 - Chaining custom codecs with built-in codecs
 
+### Custom Storage Backend Example
+
+See the test suite for a complete example of implementing a custom storage backend:
+
+```bash
+# View the custom storage tests
+cat test/ex_zarr_custom_storage_test.exs
+```
+
+The example demonstrates:
+- Implementing the `ExZarr.Storage.Backend` behavior
+- Registering and using custom backends
+- Integration with filters and compression
+- Registry operations (list, get, info)
+
 ## Supported Data Types
 
 ExZarr supports the following data types:
@@ -202,15 +218,249 @@ For complete examples, see `examples/custom_codec_example.exs` which includes:
 
 ## Storage Backends
 
-ExZarr supports two storage backends:
+ExZarr includes three built-in storage backends:
 
-- **`:memory`** - In-memory storage for temporary arrays (non-persistent)
-- **`:filesystem`** - Local filesystem storage using Zarr v2 directory structure
+- **`:memory`** - In-memory storage for temporary arrays (non-persistent, fast)
+- **`:filesystem`** - Local filesystem storage using Zarr v2 directory structure (persistent, interoperable)
+- **`:zip`** - Zip archive storage for compact single-file arrays (portable, easy to distribute)
 
 Arrays stored on the filesystem use the standard Zarr format:
 - Metadata stored in `.zarray` JSON files
 - Chunks stored as separate files with dot notation (e.g., `0.0`, `0.1`)
 - Groups marked with `.zgroup` JSON files
+
+### Using Zip Storage
+
+Zip storage stores the entire array (metadata + all chunks) in a single zip file:
+
+```elixir
+# Create array with zip storage
+{:ok, array} = ExZarr.create(
+  shape: {1000, 1000},
+  chunks: {100, 100},
+  dtype: :float64,
+  storage: :zip,
+  path: "/tmp/my_array.zip"
+)
+
+# Write data
+ExZarr.Array.set_slice(array, data, start: {0, 0}, stop: {100, 100})
+
+# Save to zip file
+:ok = ExZarr.save(array, path: "/tmp/my_array.zip")
+
+# Open existing zip
+{:ok, reopened} = ExZarr.open(path: "/tmp/my_array.zip", storage: :zip)
+```
+
+### Custom Storage Backends
+
+ExZarr supports custom storage backends through a behavior-based plugin system, similar to custom codecs. Create backends for S3, databases, cloud storage, or any other storage system:
+
+```elixir
+defmodule MyApp.S3Storage do
+  @behaviour ExZarr.Storage.Backend
+
+  @impl true
+  def backend_id, do: :s3
+
+  @impl true
+  def init(config) do
+    # Initialize S3 connection
+    bucket = Keyword.fetch!(config, :bucket)
+    {:ok, %{bucket: bucket, client: setup_s3_client()}}
+  end
+
+  @impl true
+  def read_chunk(state, chunk_index) do
+    # Read chunk from S3
+    key = build_s3_key(chunk_index)
+    AWS.S3.get_object(state.client, state.bucket, key)
+  end
+
+  @impl true
+  def write_chunk(state, chunk_index, data) do
+    # Write chunk to S3
+    key = build_s3_key(chunk_index)
+    AWS.S3.put_object(state.client, state.bucket, key, data)
+  end
+
+  # Implement other required callbacks...
+end
+
+# Register your backend
+:ok = ExZarr.Storage.Registry.register(MyApp.S3Storage)
+
+# Use it like any built-in backend
+{:ok, array} = ExZarr.create(
+  shape: {1000, 1000},
+  chunks: {100, 100},
+  storage: :s3,
+  bucket: "my-zarr-data"
+)
+```
+
+**Custom storage backend features:**
+- Runtime registration and unregistration via Registry
+- Behavior-based contract ensures all required operations are implemented
+- Seamless integration with all ExZarr features (filters, compression, metadata)
+- Can be configured via application config for automatic loading
+- Thread-safe operations managed by OTP GenServer
+
+**Required callbacks:**
+- `backend_id/0` - Returns unique atom identifier
+- `init/1` - Initialize storage with configuration
+- `open/1` - Open existing storage location
+- `read_chunk/2` - Read a chunk by index
+- `write_chunk/3` - Write a chunk
+- `read_metadata/1` - Read array metadata
+- `write_metadata/3` - Write array metadata
+- `list_chunks/1` - List all chunk indices
+- `delete_chunk/2` - Delete a chunk
+- `exists?/1` - Check if storage location exists
+
+### Cloud and Database Storage Backends
+
+ExZarr includes several pre-built storage backends for cloud services and databases:
+
+#### AWS S3 Storage
+
+```elixir
+# Add dependencies
+{:ex_aws, "~> 2.5"},
+{:ex_aws_s3, "~> 2.5"}
+
+# Register and use
+:ok = ExZarr.Storage.Registry.register(ExZarr.Storage.Backend.S3)
+
+{:ok, array} = ExZarr.create(
+  shape: {1000, 1000},
+  chunks: {100, 100},
+  storage: :s3,
+  bucket: "my-zarr-bucket",
+  prefix: "experiments/array1",
+  region: "us-west-2"
+)
+```
+
+#### Azure Blob Storage
+
+```elixir
+# Add dependency
+{:azurex, "~> 0.3"}
+
+# Register and use
+:ok = ExZarr.Storage.Registry.register(ExZarr.Storage.Backend.AzureBlob)
+
+{:ok, array} = ExZarr.create(
+  shape: {1000, 1000},
+  chunks: {100, 100},
+  storage: :azure_blob,
+  account_name: "mystorageaccount",
+  account_key: System.get_env("AZURE_STORAGE_KEY"),
+  container: "zarr-data",
+  prefix: "experiments/array1"
+)
+```
+
+#### Google Cloud Storage
+
+```elixir
+# Add dependencies
+{:goth, "~> 1.4"},
+{:req, "~> 0.4"}
+
+# Register and use
+:ok = ExZarr.Storage.Registry.register(ExZarr.Storage.Backend.GCS)
+
+{:ok, array} = ExZarr.create(
+  shape: {1000, 1000},
+  chunks: {100, 100},
+  storage: :gcs,
+  bucket: "my-zarr-bucket",
+  prefix: "experiments/array1",
+  credentials: "/path/to/service-account.json"
+)
+```
+
+#### Mnesia (Distributed Database)
+
+```elixir
+# No external dependencies - Mnesia is built into Erlang/OTP
+
+# Initialize Mnesia
+:mnesia.create_schema([node()])
+:mnesia.start()
+
+# Register and use
+:ok = ExZarr.Storage.Registry.register(ExZarr.Storage.Backend.Mnesia)
+
+{:ok, array} = ExZarr.create(
+  shape: {1000, 1000},
+  chunks: {100, 100},
+  storage: :mnesia,
+  array_id: "experiment_001",
+  table_name: :zarr_storage
+)
+```
+
+#### MongoDB GridFS
+
+```elixir
+# Add dependency
+{:mongodb_driver, "~> 1.4"}
+
+# Register and use
+:ok = ExZarr.Storage.Registry.register(ExZarr.Storage.Backend.MongoGridFS)
+
+{:ok, array} = ExZarr.create(
+  shape: {1000, 1000},
+  chunks: {100, 100},
+  storage: :mongo_gridfs,
+  url: "mongodb://localhost:27017",
+  database: "zarr_db",
+  bucket: "arrays",
+  array_id: "experiment_001"
+)
+```
+
+#### Mock Storage (Testing)
+
+```elixir
+# No dependencies - built-in for testing
+
+:ok = ExZarr.Storage.Registry.register(ExZarr.Storage.Backend.Mock)
+
+# Test with error simulation
+{:ok, array} = ExZarr.create(
+  shape: {100},
+  chunks: {10},
+  storage: :mock,
+  pid: self(),
+  error_mode: :random,
+  delay: 50  # Simulate 50ms latency
+)
+
+# Verify operations
+assert_received {:mock_storage, :write_chunk, _}
+```
+
+**Cloud Storage Features:**
+- S3, Azure Blob, and GCS backends provide scalable object storage
+- Automatic credential management from environment/config
+- Support for custom regions, buckets, and access patterns
+- Thread-safe concurrent access
+
+**Database Storage Features:**
+- Mnesia provides distributed ACID transactions
+- MongoDB GridFS handles large files (> 16MB chunks)
+- Both support replication and high availability
+
+**Mock Storage Features:**
+- Error simulation (always fail, random, or specific operations)
+- Latency simulation for performance testing
+- Message tracking for verification
+- State inspection for debugging
 
 ## Architecture
 
@@ -281,18 +531,22 @@ The project uses GitHub Actions for continuous integration. The CI pipeline:
 
 ExZarr includes comprehensive test coverage:
 
-- **Unit tests** for individual modules and end-to-end workflows (209 tests)
+- **Unit tests** for individual modules and end-to-end workflows
 - **Property-based tests** using StreamData (21 properties, 2,100+ generated test cases)
 - **Python integration tests** verifying interoperability with zarr-python (14 tests)
-- **Custom codec tests** verifying the plugin system (29 tests)
-- **Total**: 238 tests + 21 properties
-- **Test coverage**: 72.5%
+- **Custom codec tests** verifying the codec plugin system (29 tests)
+- **Custom storage tests** verifying the storage backend plugin system (20 tests)
+- **Zip storage tests** verifying zip archive backend (6 tests)
+- **Filter tests** verifying transformation pipeline (36 tests)
+- **Total**: 300 tests + 21 properties
 
 Key testing areas:
 - Compression and decompression invariants
+- Filter pipeline transformations (Delta, Quantize, Shuffle, etc.)
 - Chunk index calculations for N-dimensional arrays
 - Metadata round-trip serialization
-- Storage backend operations
+- Storage backend operations (memory, filesystem, zip)
+- Custom storage backend registration and usage
 - Array creation and manipulation
 - Edge cases and boundary conditions
 - Zarr v2 specification compatibility with Python implementation
@@ -326,15 +580,19 @@ Completed features:
 - Zig NIFs for high-performance compression codecs (zstd, lz4, snappy, blosc, bzip2)
 - CRC32C checksum codec (RFC 3720 compatible with Python zarr)
 - Custom codec plugin system with behavior-based architecture
+- Filter pipeline support (Delta, Quantize, Shuffle, FixedScaleOffset, AsType, BitRound)
+- Zip archive storage backend
+- Custom storage backend plugin system (for S3, databases, cloud storage, etc.)
 
 Future improvements planned for ExZarr:
 
-- S3 and cloud storage backends
+- Additional filters (PackBits, Categorize - require string/boolean dtype support)
 - Zarr v3 specification support
 - Concurrent chunk reading and writing
-- Array slicing and indexing operations
-- Filter pipeline support
+- Advanced array slicing and indexing operations
 - Distributed computing integration with Broadway or GenStage
+- Built-in S3 storage backend
+- Streaming API for large arrays
 
 ## Contributing
 

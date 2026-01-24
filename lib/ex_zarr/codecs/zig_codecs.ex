@@ -68,7 +68,8 @@ defmodule ExZarr.Codecs.ZigCodecs do
         {:system, "lz4"},
         {:system, "snappy"},
         {:system, "blosc"},
-        @bzip2_static_lib  # Static library (full path)
+        # Static library (full path)
+        @bzip2_static_lib
       ]
     ]
 

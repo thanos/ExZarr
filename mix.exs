@@ -1,7 +1,7 @@
 defmodule ExZarr.MixProject do
   use Mix.Project
 
-  @version "0.2.0"
+  @version "0.3.0"
   @source_url "https://github.com/thanosvassilakis/ex_zarr"
 
   def project do
@@ -43,7 +43,7 @@ defmodule ExZarr.MixProject do
   def application do
     [
       mod: {ExZarr.Application, []},
-      extra_applications: [:logger, :crypto]
+      extra_applications: [:logger, :crypto, :mnesia]
     ]
   end
 
@@ -68,6 +68,16 @@ defmodule ExZarr.MixProject do
       # Zig NIFs for compression codecs
       {:zigler, "~> 0.13", runtime: false},
 
+      # Cloud storage backends (optional)
+      {:ex_aws, "~> 2.5", optional: true},
+      {:ex_aws_s3, "~> 2.5", optional: true},
+      {:azurex, "~> 1.1"},
+      {:goth, "~> 1.4", optional: true},
+      {:req, "~> 0.4", optional: true},
+
+      # Database storage backends (optional)
+      {:mongodb_driver, "~> 1.4", optional: true},
+
       # Documentation
       {:ex_doc, "~> 0.31", only: :dev, runtime: false}
     ] ++
@@ -75,7 +85,8 @@ defmodule ExZarr.MixProject do
         {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
         {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
         {:excoveralls, "~> 0.18", only: :test},
-        {:stream_data, "~> 1.1", only: [:dev, :test]}
+        {:stream_data, "~> 1.1", only: [:dev, :test]},
+        {:mox, "~> 1.1", only: :test}
       ]
   end
 
@@ -97,7 +108,8 @@ defmodule ExZarr.MixProject do
         "Zarr Specification" => "https://zarr.dev"
       },
       maintainers: ["Thanos Vassilakis"],
-      files: ~w(lib priv native .formatter.exs mix.exs README.md CHANGELOG.md INTEROPERABILITY.md LICENSE)
+      files:
+        ~w(lib priv native .formatter.exs mix.exs README.md CHANGELOG.md INTEROPERABILITY.md LICENSE)
     ]
   end
 

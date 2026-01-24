@@ -57,7 +57,12 @@ defmodule ExZarr.CustomCodecsTest do
 
     @impl true
     def codec_info do
-      %{name: "Unavailable", version: "1.0.0", type: :compression, description: "Always unavailable"}
+      %{
+        name: "Unavailable",
+        version: "1.0.0",
+        type: :compression,
+        description: "Always unavailable"
+      }
     end
 
     @impl true
@@ -260,7 +265,8 @@ defmodule ExZarr.CustomCodecsTest do
       data = "hello"
 
       # Custom then built-in
-      {:ok, step1} = Codecs.compress(data, :test_codec)  # "hellohello"
+      # "hellohello"
+      {:ok, step1} = Codecs.compress(data, :test_codec)
       {:ok, step2} = Codecs.compress(step1, :zlib)
 
       # Reverse
@@ -291,7 +297,8 @@ defmodule ExZarr.CustomCodecsTest do
       def codec_id, do: :failing_codec
 
       @impl true
-      def codec_info, do: %{name: "Failing", version: "1.0.0", type: :compression, description: "Always fails"}
+      def codec_info,
+        do: %{name: "Failing", version: "1.0.0", type: :compression, description: "Always fails"}
 
       @impl true
       def available?, do: true

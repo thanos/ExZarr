@@ -15,6 +15,10 @@ defmodule ExZarr.Storage do
     structure. Chunks are stored as individual files with dot notation (e.g., `0.0`).
     Metadata is stored in `.zarray` JSON files.
 
+  - **`:zip`** - Zip archive storage. All chunks and metadata are stored in a single
+    zip file. Useful for archiving, distribution, and reducing file count. Uses Erlang's
+    built-in `:zip` module.
+
   ## Zarr Directory Structure
 
   For filesystem storage, arrays follow this structure:
@@ -46,7 +50,7 @@ defmodule ExZarr.Storage do
       {:ok, metadata} = ExZarr.Storage.read_metadata(storage)
   """
 
-  @type backend :: :memory | :filesystem | :s3
+  @type backend :: :memory | :filesystem | :zip | :http | :s3
   @type t :: %__MODULE__{
           backend: backend(),
           path: String.t() | nil,
@@ -84,30 +88,34 @@ defmodule ExZarr.Storage do
   - `{:error, {:mkdir_failed, reason}}` if directory creation fails
   """
   @spec init(map()) :: {:ok, t()} | {:error, term()}
-  def init(%{storage_type: :memory} = _config) do
-    # Use Agent for mutable state
-    {:ok, agent} = Agent.start_link(fn -> %{chunks: %{}, metadata: nil} end)
+  def init(%{storage_type: backend_id} = config) when is_atom(backend_id) do
+    # Look up backend module from registry
+    case ExZarr.Storage.Registry.get(backend_id) do
+      {:ok, backend_module} ->
+        # Convert config map to keyword list for backend
+        backend_config =
+          config
+          |> Map.delete(:storage_type)
+          |> Enum.to_list()
 
-    {:ok,
-     %__MODULE__{
-       backend: :memory,
-       state: %{agent: agent}
-     }}
-  end
+        # Initialize backend
+        case backend_module.init(backend_config) do
+          {:ok, backend_state} ->
+            {:ok,
+             %__MODULE__{
+               backend: backend_id,
+               path: Map.get(config, :path),
+               state: backend_state
+             }}
 
-  def init(%{storage_type: :filesystem, path: path} = _config) when is_binary(path) do
-    with :ok <- ensure_directory(path) do
-      {:ok,
-       %__MODULE__{
-         backend: :filesystem,
-         path: path,
-         state: %{}
-       }}
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      {:error, :not_found} ->
+        # Map to invalid_storage_config for backward compatibility
+        {:error, :invalid_storage_config}
     end
-  end
-
-  def init(%{storage_type: :filesystem}) do
-    {:error, :path_required}
   end
 
   def init(_), do: {:error, :invalid_storage_config}
@@ -144,22 +152,27 @@ defmodule ExZarr.Storage do
   """
   @spec open(keyword()) :: {:ok, t()} | {:error, term()}
   def open(opts) do
-    path = Keyword.get(opts, :path)
-    backend = Keyword.get(opts, :storage, :filesystem)
+    backend_id = Keyword.get(opts, :storage, :filesystem)
 
-    case backend do
-      :filesystem when is_binary(path) ->
-        if File.exists?(path) do
-          {:ok, %__MODULE__{backend: :filesystem, path: path, state: %{}}}
-        else
-          {:error, :path_not_found}
+    # Look up backend module from registry
+    case ExZarr.Storage.Registry.get(backend_id) do
+      {:ok, backend_module} ->
+        # Open backend
+        case backend_module.open(opts) do
+          {:ok, backend_state} ->
+            {:ok,
+             %__MODULE__{
+               backend: backend_id,
+               path: Keyword.get(opts, :path),
+               state: backend_state
+             }}
+
+          {:error, reason} ->
+            {:error, reason}
         end
 
-      :memory ->
-        {:error, :cannot_open_memory_storage}
-
-      _ ->
-        {:error, :invalid_storage_backend}
+      {:error, :not_found} ->
+        {:error, {:unknown_backend, backend_id}}
     end
   end
 
@@ -186,22 +199,14 @@ defmodule ExZarr.Storage do
   - `{:error, reason}` for other failures
   """
   @spec read_chunk(t(), tuple()) :: {:ok, binary()} | {:error, term()}
-  def read_chunk(%__MODULE__{backend: :memory, state: %{agent: agent}}, chunk_index) do
-    Agent.get(agent, fn state ->
-      case Map.get(state.chunks, chunk_index) do
-        nil -> {:error, :not_found}
-        data -> {:ok, data}
-      end
-    end)
-  end
+  def read_chunk(%__MODULE__{backend: backend_id, state: backend_state}, chunk_index) do
+    # Look up backend module and delegate
+    case ExZarr.Storage.Registry.get(backend_id) do
+      {:ok, backend_module} ->
+        backend_module.read_chunk(backend_state, chunk_index)
 
-  def read_chunk(%__MODULE__{backend: :filesystem, path: path}, chunk_index) do
-    chunk_path = build_chunk_path(path, chunk_index)
-
-    case File.read(chunk_path) do
-      {:ok, data} -> {:ok, data}
-      {:error, :enoent} -> {:error, :not_found}
-      {:error, reason} -> {:error, reason}
+      {:error, :not_found} ->
+        {:error, {:unknown_backend, backend_id}}
     end
   end
 
@@ -233,21 +238,14 @@ defmodule ExZarr.Storage do
   - `{:error, reason}` on failure
   """
   @spec write_chunk(t(), tuple(), binary()) :: :ok | {:error, term()}
-  def write_chunk(%__MODULE__{backend: :memory, state: %{agent: agent}}, chunk_index, data) do
-    Agent.update(agent, fn state ->
-      new_chunks = Map.put(state.chunks, chunk_index, data)
-      %{state | chunks: new_chunks}
-    end)
+  def write_chunk(%__MODULE__{backend: backend_id, state: backend_state}, chunk_index, data) do
+    # Look up backend module and delegate
+    case ExZarr.Storage.Registry.get(backend_id) do
+      {:ok, backend_module} ->
+        backend_module.write_chunk(backend_state, chunk_index, data)
 
-    :ok
-  end
-
-  def write_chunk(%__MODULE__{backend: :filesystem, path: path}, chunk_index, data) do
-    chunk_path = build_chunk_path(path, chunk_index)
-    chunk_dir = Path.dirname(chunk_path)
-
-    with :ok <- ensure_directory(chunk_dir) do
-      File.write(chunk_path, data)
+      {:error, :not_found} ->
+        {:error, {:unknown_backend, backend_id}}
     end
   end
 
@@ -272,35 +270,47 @@ defmodule ExZarr.Storage do
   - `{:error, reason}` for other failures
   """
   @spec read_metadata(t()) :: {:ok, map()} | {:error, term()}
-  def read_metadata(%__MODULE__{backend: :memory, state: %{agent: agent}}) do
-    Agent.get(agent, fn state ->
-      case Map.get(state, :metadata) do
-        nil -> {:error, :metadata_not_found}
-        metadata -> {:ok, metadata}
-      end
-    end)
+  def read_metadata(%__MODULE__{backend: backend_id, state: backend_state}) do
+    # Look up backend module and delegate
+    case ExZarr.Storage.Registry.get(backend_id) do
+      {:ok, backend_module} ->
+        case backend_module.read_metadata(backend_state) do
+          {:ok, json} when is_binary(json) ->
+            # Parse JSON to Metadata struct
+            parse_metadata_json(json)
+
+          {:ok, metadata} ->
+            # Already parsed (e.g., memory backend might store parsed metadata)
+            {:ok, metadata}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      {:error, :not_found} ->
+        {:error, {:unknown_backend, backend_id}}
+    end
   end
 
-  def read_metadata(%__MODULE__{backend: :filesystem, path: path}) do
-    metadata_path = Path.join(path, ".zarray")
+  # Parse JSON metadata into Metadata struct
+  defp parse_metadata_json(json) when is_binary(json) do
+    case Jason.decode(json, keys: :atoms) do
+      {:ok, metadata} ->
+        parsed_metadata = %ExZarr.Metadata{
+          shape: List.to_tuple(metadata.shape),
+          chunks: List.to_tuple(metadata.chunks),
+          dtype: string_to_dtype(metadata.dtype),
+          compressor: parse_compressor(metadata.compressor),
+          fill_value: metadata.fill_value,
+          order: Map.get(metadata, :order, "C"),
+          zarr_format: metadata.zarr_format,
+          filters: parse_filters(Map.get(metadata, :filters))
+        }
 
-    with {:ok, json} <- File.read(metadata_path),
-         {:ok, metadata} <- Jason.decode(json, keys: :atoms) do
-      # Convert JSON structure to internal metadata format
-      parsed_metadata = %ExZarr.Metadata{
-        shape: List.to_tuple(metadata.shape),
-        chunks: List.to_tuple(metadata.chunks),
-        dtype: string_to_dtype(metadata.dtype),
-        compressor: parse_compressor(metadata.compressor),
-        fill_value: metadata.fill_value,
-        order: Map.get(metadata, :order, "C"),
-        zarr_format: metadata.zarr_format
-      }
+        {:ok, parsed_metadata}
 
-      {:ok, parsed_metadata}
-    else
-      {:error, :enoent} -> {:error, :metadata_not_found}
-      {:error, reason} -> {:error, reason}
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -337,30 +347,28 @@ defmodule ExZarr.Storage do
   - `{:error, reason}` on failure
   """
   @spec write_metadata(t(), ExZarr.Metadata.t(), keyword()) :: :ok | {:error, term()}
-  def write_metadata(%__MODULE__{backend: :memory, state: %{agent: agent}}, metadata, _opts) do
-    Agent.update(agent, fn state ->
-      %{state | metadata: metadata}
-    end)
+  def write_metadata(%__MODULE__{backend: backend_id, state: backend_state}, metadata, opts) do
+    # Look up backend module and delegate
+    case ExZarr.Storage.Registry.get(backend_id) do
+      {:ok, backend_module} ->
+        # Convert Metadata struct to JSON
+        metadata_json = %{
+          zarr_format: 2,
+          shape: Tuple.to_list(metadata.shape),
+          chunks: Tuple.to_list(metadata.chunks),
+          dtype: dtype_to_string(metadata.dtype),
+          compressor: compressor_to_json(metadata.compressor),
+          fill_value: metadata.fill_value,
+          order: metadata.order,
+          filters: encode_filters(metadata.filters)
+        }
 
-    :ok
-  end
+        with {:ok, json} <- Jason.encode(metadata_json, pretty: true) do
+          backend_module.write_metadata(backend_state, json, opts)
+        end
 
-  def write_metadata(%__MODULE__{backend: :filesystem, path: path}, metadata, _opts) do
-    metadata_path = Path.join(path, ".zarray")
-
-    metadata_json = %{
-      zarr_format: 2,
-      shape: Tuple.to_list(metadata.shape),
-      chunks: Tuple.to_list(metadata.chunks),
-      dtype: dtype_to_string(metadata.dtype),
-      compressor: compressor_to_json(metadata.compressor),
-      fill_value: metadata.fill_value,
-      order: metadata.order,
-      filters: nil
-    }
-
-    with {:ok, json} <- Jason.encode(metadata_json, pretty: true) do
-      File.write(metadata_path, json)
+      {:error, :not_found} ->
+        {:error, {:unknown_backend, backend_id}}
     end
   end
 
@@ -386,60 +394,18 @@ defmodule ExZarr.Storage do
   The order of chunks in the returned list is not guaranteed.
   """
   @spec list_chunks(t()) :: {:ok, [tuple()]} | {:error, term()}
-  def list_chunks(%__MODULE__{backend: :memory, state: %{agent: agent}}) do
-    Agent.get(agent, fn state ->
-      {:ok, Map.keys(state.chunks)}
-    end)
-  end
+  def list_chunks(%__MODULE__{backend: backend_id, state: backend_state}) do
+    # Look up backend module and delegate
+    case ExZarr.Storage.Registry.get(backend_id) do
+      {:ok, backend_module} ->
+        backend_module.list_chunks(backend_state)
 
-  def list_chunks(%__MODULE__{backend: :filesystem, path: path}) do
-    case File.ls(path) do
-      {:ok, files} ->
-        chunks =
-          files
-          |> Enum.filter(&String.contains?(&1, "."))
-          |> Enum.map(&parse_chunk_filename/1)
-          |> Enum.reject(&is_nil/1)
-
-        {:ok, chunks}
-
-      {:error, reason} ->
-        {:error, reason}
+      {:error, :not_found} ->
+        {:error, {:unknown_backend, backend_id}}
     end
   end
 
   ## Private Functions
-
-  defp ensure_directory(path) do
-    case File.mkdir_p(path) do
-      :ok -> :ok
-      {:error, reason} -> {:error, {:mkdir_failed, reason}}
-    end
-  end
-
-  defp build_chunk_path(base_path, chunk_index) do
-    # Zarr uses dot-separated notation for chunk indices: 0.0, 0.1, etc.
-    chunk_name =
-      chunk_index
-      |> Tuple.to_list()
-      |> Enum.join(".")
-
-    Path.join(base_path, chunk_name)
-  end
-
-  defp parse_chunk_filename(filename) do
-    case String.split(filename, ".") do
-      parts when length(parts) > 1 ->
-        parts
-        |> Enum.map(&String.to_integer/1)
-        |> List.to_tuple()
-
-      _ ->
-        nil
-    end
-  rescue
-    _ -> nil
-  end
 
   defp parse_compressor(nil), do: :none
   defp parse_compressor(%{id: id}), do: String.to_atom(id)
@@ -500,4 +466,206 @@ defmodule ExZarr.Storage do
   defp dtype_to_string(:uint64), do: "<u8"
   defp dtype_to_string(:float32), do: "<f4"
   defp dtype_to_string(:float64), do: "<f8"
+
+  # Filter serialization helpers
+
+  defp encode_filters(nil), do: nil
+  defp encode_filters([]), do: nil
+
+  defp encode_filters(filters) when is_list(filters) do
+    Enum.map(filters, fn {filter_id, opts} ->
+      case ExZarr.Codecs.Registry.get(filter_id) do
+        {:ok, :builtin_delta} ->
+          encode_builtin_filter(:delta, opts)
+
+        {:ok, :builtin_quantize} ->
+          encode_builtin_filter(:quantize, opts)
+
+        {:ok, :builtin_shuffle} ->
+          encode_builtin_filter(:shuffle, opts)
+
+        {:ok, :builtin_fixedscaleoffset} ->
+          encode_builtin_filter(:fixedscaleoffset, opts)
+
+        {:ok, :builtin_astype} ->
+          encode_builtin_filter(:astype, opts)
+
+        {:ok, :builtin_packbits} ->
+          encode_builtin_filter(:packbits, opts)
+
+        {:ok, :builtin_categorize} ->
+          encode_builtin_filter(:categorize, opts)
+
+        {:ok, :builtin_bitround} ->
+          encode_builtin_filter(:bitround, opts)
+
+        {:ok, module} when is_atom(module) ->
+          # Custom filter - ask module to encode
+          module.to_json_config(opts)
+
+        {:error, :not_found} ->
+          # Shouldn't happen (validated in metadata), but handle gracefully
+          %{"id" => Atom.to_string(filter_id)}
+      end
+    end)
+  end
+
+  defp encode_builtin_filter(:delta, opts) do
+    %{
+      "id" => "delta",
+      "dtype" => dtype_to_string(opts[:dtype]),
+      "astype" => dtype_to_string(opts[:astype] || opts[:dtype])
+    }
+  end
+
+  defp encode_builtin_filter(:quantize, opts) do
+    %{
+      "id" => "quantize",
+      "digits" => opts[:digits],
+      "dtype" => dtype_to_string(opts[:dtype])
+    }
+  end
+
+  defp encode_builtin_filter(:shuffle, opts) do
+    %{
+      "id" => "shuffle",
+      "elementsize" => opts[:elementsize] || 4
+    }
+  end
+
+  defp encode_builtin_filter(:fixedscaleoffset, opts) do
+    %{
+      "id" => "fixedscaleoffset",
+      "offset" => opts[:offset],
+      "scale" => opts[:scale],
+      "dtype" => dtype_to_string(opts[:dtype]),
+      "astype" => dtype_to_string(opts[:astype] || opts[:dtype])
+    }
+  end
+
+  defp encode_builtin_filter(:astype, opts) do
+    %{
+      "id" => "astype",
+      "encode_dtype" => dtype_to_string(opts[:encode_dtype]),
+      "decode_dtype" => dtype_to_string(opts[:decode_dtype])
+    }
+  end
+
+  defp encode_builtin_filter(:packbits, _opts) do
+    %{"id" => "packbits"}
+  end
+
+  defp encode_builtin_filter(:categorize, opts) do
+    %{
+      "id" => "categorize",
+      "dtype" => dtype_to_string(opts[:dtype])
+    }
+  end
+
+  defp encode_builtin_filter(:bitround, opts) do
+    %{
+      "id" => "bitround",
+      "keepbits" => opts[:keepbits]
+    }
+  end
+
+  defp parse_filters(nil), do: nil
+  defp parse_filters([]), do: nil
+
+  defp parse_filters(filters) when is_list(filters) do
+    filters
+    |> Enum.map(fn filter_config ->
+      filter_id = String.to_atom(filter_config[:id] || filter_config["id"])
+
+      case ExZarr.Codecs.Registry.get(filter_id) do
+        {:ok, :builtin_delta} ->
+          {filter_id, parse_builtin_filter(:delta, filter_config)}
+
+        {:ok, :builtin_quantize} ->
+          {filter_id, parse_builtin_filter(:quantize, filter_config)}
+
+        {:ok, :builtin_shuffle} ->
+          {filter_id, parse_builtin_filter(:shuffle, filter_config)}
+
+        {:ok, :builtin_fixedscaleoffset} ->
+          {filter_id, parse_builtin_filter(:fixedscaleoffset, filter_config)}
+
+        {:ok, :builtin_astype} ->
+          {filter_id, parse_builtin_filter(:astype, filter_config)}
+
+        {:ok, :builtin_packbits} ->
+          {filter_id, parse_builtin_filter(:packbits, filter_config)}
+
+        {:ok, :builtin_categorize} ->
+          {filter_id, parse_builtin_filter(:categorize, filter_config)}
+
+        {:ok, :builtin_bitround} ->
+          {filter_id, parse_builtin_filter(:bitround, filter_config)}
+
+        {:ok, module} when is_atom(module) ->
+          # Custom filter
+          opts = module.from_json_config(filter_config)
+          {filter_id, opts}
+
+        {:error, :not_found} ->
+          # Unknown filter - log warning but allow reading
+          require Logger
+          Logger.warning("Unknown filter: #{filter_id}")
+          {filter_id, []}
+      end
+    end)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp parse_builtin_filter(:delta, config) do
+    [
+      dtype: string_to_dtype(config[:dtype] || config["dtype"]),
+      astype: string_to_dtype(config[:astype] || config["astype"])
+    ]
+  end
+
+  defp parse_builtin_filter(:quantize, config) do
+    [
+      digits: config[:digits] || config["digits"],
+      dtype: string_to_dtype(config[:dtype] || config["dtype"])
+    ]
+  end
+
+  defp parse_builtin_filter(:shuffle, config) do
+    [
+      elementsize: config[:elementsize] || config["elementsize"] || 4
+    ]
+  end
+
+  defp parse_builtin_filter(:fixedscaleoffset, config) do
+    [
+      offset: config[:offset] || config["offset"],
+      scale: config[:scale] || config["scale"],
+      dtype: string_to_dtype(config[:dtype] || config["dtype"]),
+      astype: string_to_dtype(config[:astype] || config["astype"])
+    ]
+  end
+
+  defp parse_builtin_filter(:astype, config) do
+    [
+      encode_dtype: string_to_dtype(config[:encode_dtype] || config["encode_dtype"]),
+      decode_dtype: string_to_dtype(config[:decode_dtype] || config["decode_dtype"])
+    ]
+  end
+
+  defp parse_builtin_filter(:packbits, _config) do
+    []
+  end
+
+  defp parse_builtin_filter(:categorize, config) do
+    [
+      dtype: string_to_dtype(config[:dtype] || config["dtype"])
+    ]
+  end
+
+  defp parse_builtin_filter(:bitround, config) do
+    [
+      keepbits: config[:keepbits] || config["keepbits"]
+    ]
+  end
 end
