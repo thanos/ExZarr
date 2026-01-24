@@ -90,11 +90,11 @@ jobs:
         #
         # To run all tests locally:
         # mix test --include s3 --include gcs --include azure --include mongo --include mnesia
-        run: mix test --trace
+        run: mix test --trace --exclude s3 --exclude gcs --exclude azure --exclude mongo --exclude mnesia
 
       - name: Run tests with coverage
         if: ${{ matrix.coverage }}
-        run: mix coveralls.github
+        run: mix coveralls.github --exclude s3 --exclude gcs --exclude azure --exclude mongo --exclude mnesia
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
