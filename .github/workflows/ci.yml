@@ -32,6 +32,10 @@ jobs:
             otp: '25.3'
 
     steps:
+      - name: Install Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
       - name: Checkout code
         uses: actions/checkout@v4
 
