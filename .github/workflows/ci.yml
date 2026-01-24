@@ -33,7 +33,18 @@ jobs:
 
     steps:
       - name: Install bzip2
-        run: sudo apt-get update && sudo apt-get install -y libbz2-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libbz2-dev
+          # Find and set the bzip2 static library path
+          BZIP2_LIB=$(find /usr/lib -name libbz2.a 2>/dev/null | head -n1)
+          if [ -z "$BZIP2_LIB" ]; then
+            echo "Warning: libbz2.a not found, using system linking"
+            echo "BZIP2_STATIC_LIB=-lbz2" >> $GITHUB_ENV
+          else
+            echo "Found libbz2.a at: $BZIP2_LIB"
+            echo "BZIP2_STATIC_LIB=$BZIP2_LIB" >> $GITHUB_ENV
+          fi
       - name: Install Zig
         uses: goto-bus-stop/setup-zig@v2
         with:
@@ -85,6 +96,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Install bzip2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libbz2-dev
+          # Find and set the bzip2 static library path
+          BZIP2_LIB=$(find /usr/lib -name libbz2.a 2>/dev/null | head -n1)
+          if [ -z "$BZIP2_LIB" ]; then
+            echo "Warning: libbz2.a not found, using system linking"
+            echo "BZIP2_STATIC_LIB=-lbz2" >> $GITHUB_ENV
+          else
+            echo "Found libbz2.a at: $BZIP2_LIB"
+            echo "BZIP2_STATIC_LIB=$BZIP2_LIB" >> $GITHUB_ENV
+          fi
+      - name: Install Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Setup Elixir
@@ -130,6 +158,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Install bzip2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libbz2-dev
+          # Find and set the bzip2 static library path
+          BZIP2_LIB=$(find /usr/lib -name libbz2.a 2>/dev/null | head -n1)
+          if [ -z "$BZIP2_LIB" ]; then
+            echo "Warning: libbz2.a not found, using system linking"
+            echo "BZIP2_STATIC_LIB=-lbz2" >> $GITHUB_ENV
+          else
+            echo "Found libbz2.a at: $BZIP2_LIB"
+            echo "BZIP2_STATIC_LIB=$BZIP2_LIB" >> $GITHUB_ENV
+          fi
+      - name: Install Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
       - name: Checkout code
         uses: actions/checkout@v4
 
