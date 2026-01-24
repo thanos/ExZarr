@@ -14,7 +14,8 @@ jobs:
     name: Test (Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }})
     runs-on: ubuntu-latest
 
-    # Optional MongoDB service (uncomment if running :mongo tagged tests)
+    # Optional services for integration tests (not needed for CI)
+    # Uncomment if running tests with --include mongo or --include mnesia
     # services:
     #   mongodb:
     #     image: mongo:5.0
@@ -81,9 +82,14 @@ jobs:
         if: ${{ matrix.lint }}
 
       - name: Run tests
-        # Note: Cloud storage tests (:s3, :gcs, :azure, :mongo) are excluded by default
-        # They require external services and credentials
-        # To run them: mix test --include s3 --include gcs --include azure --include mongo
+        # CI runs only self-contained storage backends:
+        # ✓ Memory, ETS, Mock, Filesystem, Zip
+        #
+        # Excluded (require external services):
+        # ✗ S3, GCS, Azure, MongoDB, Mnesia
+        #
+        # To run all tests locally:
+        # mix test --include s3 --include gcs --include azure --include mongo --include mnesia
         run: mix test --trace
 
       - name: Run tests with coverage

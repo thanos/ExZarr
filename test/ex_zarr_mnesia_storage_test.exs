@@ -3,6 +3,12 @@ defmodule ExZarr.MnesiaStorageTest do
   alias ExZarr.Storage.Backend.Mnesia, as: MnesiaBackend
   alias ExZarr.Storage.Registry
 
+  @moduletag :mnesia
+
+  # These tests require Mnesia to be running
+  # They are skipped by default in CI
+  # To run: mix test --include mnesia
+
   setup_all do
     # Initialize Mnesia (only once for all tests)
     :mnesia.stop()
