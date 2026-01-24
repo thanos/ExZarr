@@ -32,10 +32,10 @@ jobs:
           #   otp: '25.3'
 
     steps:
-      - name: Install bzip2
+      - name: Install system libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libbz2-dev
+          sudo apt-get install -y libzstd-dev liblz4-dev libsnappy-dev libblosc-dev libbz2-dev
           # Find and set the bzip2 static library path
           BZIP2_LIB=$(find /usr/lib -name libbz2.a 2>/dev/null | head -n1)
           if [ -z "$BZIP2_LIB" ]; then
@@ -96,10 +96,10 @@ jobs:
   #   runs-on: ubuntu-latest
 
   #   steps:
-  #     - name: Install bzip2
+  #     - name: Install system libraries
   #       run: |
   #         sudo apt-get update
-  #         sudo apt-get install -y libbz2-dev
+  #         sudo apt-get install -y libzstd-dev liblz4-dev libsnappy-dev libblosc-dev libbz2-dev
   #         # Find and set the bzip2 static library path
   #         BZIP2_LIB=$(find /usr/lib -name libbz2.a 2>/dev/null | head -n1)
   #         if [ -z "$BZIP2_LIB" ]; then
@@ -158,10 +158,10 @@ jobs:
   #   runs-on: ubuntu-latest
 
   #   steps:
-  #     - name: Install bzip2
+  #     - name: Install system libraries
   #       run: |
   #         sudo apt-get update
-  #         sudo apt-get install -y libbz2-dev
+  #         sudo apt-get install -y libzstd-dev liblz4-dev libsnappy-dev libblosc-dev libbz2-dev
   #         # Find and set the bzip2 static library path
   #         BZIP2_LIB=$(find /usr/lib -name libbz2.a 2>/dev/null | head -n1)
   #         if [ -z "$BZIP2_LIB" ]; then
