@@ -2,7 +2,7 @@ defmodule ExZarr.MixProject do
   use Mix.Project
 
   @version "0.3.0"
-  @source_url "https://github.com/thanosvassilakis/ex_zarr"
+  @source_url "https://github.com/thanos/ex_zarr"
 
   def project do
     [
