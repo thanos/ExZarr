@@ -94,6 +94,22 @@ This demonstrates:
 - Complete examples of multi-language workflows
 - Troubleshooting common issues
 
+### Custom Codecs Example
+
+See how to create and use custom compression codecs:
+
+```bash
+# Run the custom codec example
+mix run examples/custom_codec_example.exs
+```
+
+This demonstrates:
+- Creating custom transformation codecs (UppercaseCodec)
+- Creating custom compression codecs (RleCodec)
+- Registering and unregistering codecs at runtime
+- Querying codec information
+- Chaining custom codecs with built-in codecs
+
 ## Supported Data Types
 
 ExZarr supports the following data types:
@@ -106,14 +122,83 @@ All data types use little-endian byte order by default, consistent with the Zarr
 
 ## Compression Codecs
 
-ExZarr provides the following compression options:
+ExZarr provides the following built-in compression options:
 
 - **`:none`** - No compression (fastest, largest size)
 - **`:zlib`** - Standard zlib compression (good balance of speed and compression)
-- **`:zstd`** - Zstandard compression (currently falls back to zlib)
-- **`:lz4`** - LZ4 compression (currently falls back to zlib)
+- **`:crc32c`** - CRC32C checksum codec (RFC 3720 compatible with Python zarr)
+- **`:zstd`** - Zstandard compression (Zig NIF implementation)
+- **`:lz4`** - LZ4 compression (Zig NIF implementation)
+- **`:snappy`** - Snappy compression (Zig NIF implementation)
+- **`:blosc`** - Blosc meta-compressor (Zig NIF implementation)
+- **`:bzip2`** - Bzip2 compression (Zig NIF implementation)
 
 The `:zlib` codec uses Erlang's built-in `:zlib` module for maximum reliability and compatibility.
+
+### Custom Codecs
+
+ExZarr supports custom codecs through a behavior-based plugin system. You can create your own compression, checksum, or transformation codecs:
+
+```elixir
+defmodule MyCustomCodec do
+  @behaviour ExZarr.Codecs.Codec
+
+  @impl true
+  def codec_id, do: :my_codec
+
+  @impl true
+  def codec_info do
+    %{
+      name: "My Custom Codec",
+      version: "1.0.0",
+      type: :compression,  # or :transformation
+      description: "My custom compression algorithm"
+    }
+  end
+
+  @impl true
+  def available?, do: true
+
+  @impl true
+  def encode(data, opts) when is_binary(data) do
+    # Your encoding logic here
+    {:ok, compressed_data}
+  end
+
+  @impl true
+  def decode(data, opts) when is_binary(data) do
+    # Your decoding logic here
+    {:ok, decompressed_data}
+  end
+
+  @impl true
+  def validate_config(opts) do
+    # Validate options
+    :ok
+  end
+end
+
+# Register your codec
+:ok = ExZarr.Codecs.register_codec(MyCustomCodec)
+
+# Use it like any built-in codec
+{:ok, array} = ExZarr.create(
+  shape: {1000, 1000},
+  chunks: {100, 100},
+  compressor: :my_codec
+)
+```
+
+For complete examples, see `examples/custom_codec_example.exs` which includes:
+- `UppercaseCodec` - Simple transformation codec
+- `RleCodec` - Run-length encoding compression
+
+**Custom codec features:**
+- Runtime registration and unregistration
+- Behavior-based contract for consistency
+- Seamless integration with built-in codecs
+- Can be chained with other codecs
+- Managed by supervised GenServer registry
 
 ## Storage Backends
 
@@ -196,10 +281,11 @@ The project uses GitHub Actions for continuous integration. The CI pipeline:
 
 ExZarr includes comprehensive test coverage:
 
-- **Unit tests** for individual modules and end-to-end workflows (128 tests)
+- **Unit tests** for individual modules and end-to-end workflows (209 tests)
 - **Property-based tests** using StreamData (21 properties, 2,100+ generated test cases)
 - **Python integration tests** verifying interoperability with zarr-python (14 tests)
-- **Total**: 142 tests + 21 properties
+- **Custom codec tests** verifying the plugin system (29 tests)
+- **Total**: 238 tests + 21 properties
 - **Test coverage**: 72.5%
 
 Key testing areas:
@@ -210,6 +296,8 @@ Key testing areas:
 - Array creation and manipulation
 - Edge cases and boundary conditions
 - Zarr v2 specification compatibility with Python implementation
+- Custom codec registration and runtime behavior
+- CRC32C checksum validation
 
 ### Python Integration Tests
 
@@ -234,16 +322,18 @@ These tests verify that:
 
 ## Roadmap
 
+Completed features:
+- Zig NIFs for high-performance compression codecs (zstd, lz4, snappy, blosc, bzip2)
+- CRC32C checksum codec (RFC 3720 compatible with Python zarr)
+- Custom codec plugin system with behavior-based architecture
+
 Future improvements planned for ExZarr:
 
-- Native ZSTD and LZ4 compression implementations
-- Zig NIFs for high-performance compression codecs
 - S3 and cloud storage backends
 - Zarr v3 specification support
 - Concurrent chunk reading and writing
 - Array slicing and indexing operations
 - Filter pipeline support
-- Blosc meta-compressor support
 - Distributed computing integration with Broadway or GenStage
 
 ## Contributing

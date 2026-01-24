@@ -1,7 +1,7 @@
 defmodule ExZarr.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "0.2.0"
   @source_url "https://github.com/thanosvassilakis/ex_zarr"
 
   def project do
@@ -11,6 +11,8 @@ defmodule ExZarr.MixProject do
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
+      compilers: Mix.compilers(),
+      aliases: aliases(),
 
       # Package info
       description: description(),
@@ -32,8 +34,15 @@ defmodule ExZarr.MixProject do
     ]
   end
 
+  defp aliases do
+    [
+      compile: ["compile", "fix_nif_rpaths"]
+    ]
+  end
+
   def application do
     [
+      mod: {ExZarr.Application, []},
       extra_applications: [:logger, :crypto]
     ]
   end
@@ -53,10 +62,12 @@ defmodule ExZarr.MixProject do
 
   defp deps do
     [
-      # Ziggler for Zig NIFs (compression codecs)
-      {:zigler, "~> 0.13", runtime: false},
       # JSON encoding/decoding for metadata
       {:jason, "~> 1.4"},
+
+      # Zig NIFs for compression codecs
+      {:zigler, "~> 0.13", runtime: false},
+
       # Documentation
       {:ex_doc, "~> 0.31", only: :dev, runtime: false}
     ] ++
