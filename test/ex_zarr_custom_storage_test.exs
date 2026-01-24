@@ -1,7 +1,9 @@
 defmodule ExZarr.CustomStorageTest do
   use ExUnit.Case
-  alias ExZarr.Storage.Registry
 
+  alias ExZarr.Storage.Backend
+  alias ExZarr.Storage.Backend.{Filesystem, Memory, Zip}
+  alias ExZarr.Storage.Registry
   # Define a simple custom storage backend for testing
   defmodule TestStorageBackend do
     @behaviour ExZarr.Storage.Backend
@@ -97,15 +99,15 @@ defmodule ExZarr.CustomStorageTest do
 
   describe "Backend behavior" do
     test "Backend.implements?/1 detects valid backends" do
-      assert ExZarr.Storage.Backend.implements?(TestStorageBackend)
-      assert ExZarr.Storage.Backend.implements?(ExZarr.Storage.Backend.Memory)
-      assert ExZarr.Storage.Backend.implements?(ExZarr.Storage.Backend.Filesystem)
-      assert ExZarr.Storage.Backend.implements?(ExZarr.Storage.Backend.Zip)
+      assert Backend.implements?(TestStorageBackend)
+      assert Backend.implements?(Memory)
+      assert Backend.implements?(Filesystem)
+      assert Backend.implements?(Zip)
     end
 
     test "Backend.implements?/1 rejects invalid backends" do
-      refute ExZarr.Storage.Backend.implements?(InvalidBackend)
-      refute ExZarr.Storage.Backend.implements?(NonExistentModule)
+      refute Backend.implements?(InvalidBackend)
+      refute Backend.implements?(NonExistentModule)
     end
   end
 
@@ -124,9 +126,9 @@ defmodule ExZarr.CustomStorageTest do
     end
 
     test "gets built-in backend modules" do
-      assert {:ok, ExZarr.Storage.Backend.Memory} = Registry.get(:memory)
-      assert {:ok, ExZarr.Storage.Backend.Filesystem} = Registry.get(:filesystem)
-      assert {:ok, ExZarr.Storage.Backend.Zip} = Registry.get(:zip)
+      assert {:ok, Memory} = Registry.get(:memory)
+      assert {:ok, Filesystem} = Registry.get(:filesystem)
+      assert {:ok, Zip} = Registry.get(:zip)
     end
 
     test "returns error for unknown backend" do

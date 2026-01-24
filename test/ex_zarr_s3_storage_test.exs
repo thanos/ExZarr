@@ -1,6 +1,8 @@
 defmodule ExZarr.S3StorageTest do
   use ExUnit.Case
 
+  alias ExZarr.Storage.Backend.S3
+
   @moduletag :s3
 
   # These tests validate the S3 backend configuration and logic
@@ -10,7 +12,7 @@ defmodule ExZarr.S3StorageTest do
   describe "Configuration validation" do
     test "requires bucket parameter" do
       result =
-        ExZarr.Storage.Backend.S3.init(
+        S3.init(
           region: "us-east-1",
           prefix: "test"
         )
@@ -30,7 +32,7 @@ defmodule ExZarr.S3StorageTest do
       case Code.ensure_loaded(ExAws) do
         {:module, _} ->
           # If ex_aws is available, test the config processing
-          result = ExZarr.Storage.Backend.S3.init(config)
+          result = S3.init(config)
 
           case result do
             {:ok, state} ->
@@ -52,7 +54,7 @@ defmodule ExZarr.S3StorageTest do
     test "uses default region if not specified" do
       case Code.ensure_loaded(ExAws) do
         {:module, _} ->
-          result = ExZarr.Storage.Backend.S3.init(bucket: "test-bucket")
+          result = S3.init(bucket: "test-bucket")
 
           case result do
             {:ok, state} ->
@@ -71,7 +73,7 @@ defmodule ExZarr.S3StorageTest do
     test "uses empty prefix by default" do
       case Code.ensure_loaded(ExAws) do
         {:module, _} ->
-          result = ExZarr.Storage.Backend.S3.init(bucket: "test-bucket")
+          result = S3.init(bucket: "test-bucket")
 
           case result do
             {:ok, state} ->
@@ -89,7 +91,7 @@ defmodule ExZarr.S3StorageTest do
 
   describe "Backend info" do
     test "returns correct backend_id" do
-      assert ExZarr.Storage.Backend.S3.backend_id() == :s3
+      assert S3.backend_id() == :s3
     end
   end
 
@@ -125,13 +127,13 @@ defmodule ExZarr.S3StorageTest do
 
         {:error, :nofile} ->
           # If ex_aws is not loaded, the module should still be loadable
-          assert Code.ensure_loaded?(ExZarr.Storage.Backend.S3)
+          assert Code.ensure_loaded?(S3)
       end
     end
 
     test "exists? returns false for invalid configuration" do
       result =
-        ExZarr.Storage.Backend.S3.exists?(
+        S3.exists?(
           bucket: "nonexistent-bucket-xyz123",
           prefix: "test"
         )

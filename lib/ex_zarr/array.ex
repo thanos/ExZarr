@@ -504,9 +504,8 @@ defmodule ExZarr.Array do
         case Storage.read_chunk(array.storage, index) do
           {:ok, compressed_data} ->
             # Decompress, then apply filters in REVERSE order
-            with {:ok, decompressed} <- Codecs.decompress(compressed_data, array.compressor),
-                 {:ok, unfiltered} <- apply_filters_decode(decompressed, array.metadata.filters) do
-              {:ok, unfiltered}
+            with {:ok, decompressed} <- Codecs.decompress(compressed_data, array.compressor) do
+                 apply_filters_decode(decompressed, array.metadata.filters)
             end
 
           {:error, :not_found} ->

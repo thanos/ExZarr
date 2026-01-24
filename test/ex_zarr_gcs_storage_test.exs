@@ -1,6 +1,8 @@
 defmodule ExZarr.GCSStorageTest do
   use ExUnit.Case
 
+  alias ExZarr.Storage.Backend.GCS
+
   @moduletag :gcs
 
   # These tests validate the GCS backend configuration and logic
@@ -10,7 +12,7 @@ defmodule ExZarr.GCSStorageTest do
   describe "Configuration validation" do
     test "requires bucket parameter" do
       result =
-        ExZarr.Storage.Backend.GCS.init(
+        GCS.init(
           credentials: "/path/to/service-account.json",
           prefix: "test"
         )
@@ -25,7 +27,7 @@ defmodule ExZarr.GCSStorageTest do
       case Code.ensure_loaded(Goth.Token) do
         {:module, _} ->
           result =
-            ExZarr.Storage.Backend.GCS.init(
+            GCS.init(
               bucket: "test-bucket",
               prefix: "test"
             )
@@ -54,7 +56,7 @@ defmodule ExZarr.GCSStorageTest do
             prefix: "data/arrays"
           ]
 
-          result = ExZarr.Storage.Backend.GCS.init(config)
+          result = GCS.init(config)
 
           case result do
             {:ok, state} ->
@@ -91,7 +93,7 @@ defmodule ExZarr.GCSStorageTest do
             credentials: credentials
           ]
 
-          result = ExZarr.Storage.Backend.GCS.init(config)
+          result = GCS.init(config)
 
           case result do
             {:ok, state} ->
@@ -115,7 +117,7 @@ defmodule ExZarr.GCSStorageTest do
             credentials: %{"type" => "service_account"}
           ]
 
-          result = ExZarr.Storage.Backend.GCS.init(config)
+          result = GCS.init(config)
 
           case result do
             {:ok, state} ->
@@ -133,7 +135,7 @@ defmodule ExZarr.GCSStorageTest do
 
   describe "Backend info" do
     test "returns correct backend_id" do
-      assert ExZarr.Storage.Backend.GCS.backend_id() == :gcs
+      assert GCS.backend_id() == :gcs
     end
   end
 
@@ -177,7 +179,7 @@ defmodule ExZarr.GCSStorageTest do
 
         {:error, :nofile} ->
           # Module should still be loadable even without goth
-          assert Code.ensure_loaded?(ExZarr.Storage.Backend.GCS)
+          assert Code.ensure_loaded?(GCS)
       end
     end
 

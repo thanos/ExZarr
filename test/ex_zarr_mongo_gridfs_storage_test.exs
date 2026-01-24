@@ -1,6 +1,8 @@
 defmodule ExZarr.MongoGridFSStorageTest do
   use ExUnit.Case
 
+  alias ExZarr.Storage.Backend.MongoGridFS
+
   @moduletag :mongo
 
   # These tests validate the MongoDB GridFS backend configuration and logic
@@ -10,7 +12,7 @@ defmodule ExZarr.MongoGridFSStorageTest do
   describe "Configuration validation" do
     test "requires url parameter" do
       result =
-        ExZarr.Storage.Backend.MongoGridFS.init(
+        MongoGridFS.init(
           database: "test_db",
           array_id: "array1"
         )
@@ -20,7 +22,7 @@ defmodule ExZarr.MongoGridFSStorageTest do
 
     test "requires database parameter" do
       result =
-        ExZarr.Storage.Backend.MongoGridFS.init(
+        MongoGridFS.init(
           url: "mongodb://localhost:27017",
           array_id: "array1"
         )
@@ -30,7 +32,7 @@ defmodule ExZarr.MongoGridFSStorageTest do
 
     test "requires array_id parameter" do
       result =
-        ExZarr.Storage.Backend.MongoGridFS.init(
+        MongoGridFS.init(
           url: "mongodb://localhost:27017",
           database: "test_db"
         )
@@ -48,7 +50,7 @@ defmodule ExZarr.MongoGridFSStorageTest do
             bucket: "zarr_arrays"
           ]
 
-          result = ExZarr.Storage.Backend.MongoGridFS.init(config)
+          result = MongoGridFS.init(config)
 
           case result do
             {:ok, state} ->
@@ -77,7 +79,7 @@ defmodule ExZarr.MongoGridFSStorageTest do
             array_id: "array1"
           ]
 
-          result = ExZarr.Storage.Backend.MongoGridFS.init(config)
+          result = MongoGridFS.init(config)
 
           case result do
             {:ok, state} ->
@@ -95,7 +97,7 @@ defmodule ExZarr.MongoGridFSStorageTest do
 
   describe "Backend info" do
     test "returns correct backend_id" do
-      assert ExZarr.Storage.Backend.MongoGridFS.backend_id() == :mongo_gridfs
+      assert MongoGridFS.backend_id() == :mongo_gridfs
     end
   end
 
@@ -118,7 +120,7 @@ defmodule ExZarr.MongoGridFSStorageTest do
       case Code.ensure_loaded(Mongo) do
         {:module, _} ->
           result =
-            ExZarr.Storage.Backend.MongoGridFS.init(
+            MongoGridFS.init(
               url: url,
               database: "test",
               array_id: "array1"
@@ -140,7 +142,7 @@ defmodule ExZarr.MongoGridFSStorageTest do
       case Code.ensure_loaded(Mongo) do
         {:module, _} ->
           result =
-            ExZarr.Storage.Backend.MongoGridFS.init(
+            MongoGridFS.init(
               url: url,
               database: "test",
               array_id: "array1"
@@ -162,7 +164,7 @@ defmodule ExZarr.MongoGridFSStorageTest do
       case Code.ensure_loaded(Mongo) do
         {:module, _} ->
           result =
-            ExZarr.Storage.Backend.MongoGridFS.init(
+            MongoGridFS.init(
               url: url,
               database: "test",
               array_id: "array1"
@@ -201,7 +203,7 @@ defmodule ExZarr.MongoGridFSStorageTest do
 
         {:error, :nofile} ->
           # Module should still be loadable even without mongodb_driver
-          assert Code.ensure_loaded?(ExZarr.Storage.Backend.MongoGridFS)
+          assert Code.ensure_loaded?(MongoGridFS)
       end
     end
 
@@ -236,7 +238,7 @@ defmodule ExZarr.MongoGridFSStorageTest do
             bucket: "custom_bucket"
           ]
 
-          result = ExZarr.Storage.Backend.MongoGridFS.init(config)
+          result = MongoGridFS.init(config)
 
           case result do
             {:ok, state} ->

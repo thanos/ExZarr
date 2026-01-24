@@ -1,10 +1,11 @@
 defmodule ExZarr.CustomCodecsTest do
   use ExUnit.Case
   alias ExZarr.Codecs
+  alias ExZarr.Codecs.Codec
 
   # Test codec for examples
   defmodule TestCodec do
-    @behaviour ExZarr.Codecs.Codec
+    @behaviour Codec
 
     @impl true
     def codec_id, do: :test_codec
@@ -50,7 +51,7 @@ defmodule ExZarr.CustomCodecsTest do
   end
 
   defmodule UnavailableCodec do
-    @behaviour ExZarr.Codecs.Codec
+    @behaviour Codec
 
     @impl true
     def codec_id, do: :unavailable_codec
@@ -82,11 +83,11 @@ defmodule ExZarr.CustomCodecsTest do
 
   describe "Codec behavior" do
     test "implements?/1 detects valid codec" do
-      assert ExZarr.Codecs.Codec.implements?(TestCodec)
+      assert Codec.implements?(TestCodec)
     end
 
     test "implements?/1 detects invalid codec" do
-      refute ExZarr.Codecs.Codec.implements?(InvalidCodec)
+      refute Codec.implements?(InvalidCodec)
     end
   end
 
@@ -291,7 +292,7 @@ defmodule ExZarr.CustomCodecsTest do
 
   describe "Error handling" do
     defmodule FailingCodec do
-      @behaviour ExZarr.Codecs.Codec
+      @behaviour Codec
 
       @impl true
       def codec_id, do: :failing_codec
