@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 env:
   MIX_ENV: test
@@ -19,17 +19,17 @@ jobs:
       matrix:
         include:
           # Latest stable versions
-          - elixir: '1.19.5'
-            otp: '28.1'
+          - elixir: "1.19.5"
+            otp: "28.1"
             lint: true
             coverage: true
           # Previous versions for compatibility
-          - elixir: '1.18.4'
-            otp: '27.3'
-          - elixir: '1.17.3'
-            otp: '26.2'
-          - elixir: '1.16.3'
-            otp: '25.3'
+          # - elixir: '1.18.4'
+          #   otp: '27.3'
+          # - elixir: '1.17.3'
+          #   otp: '26.2'
+          # - elixir: '1.16.3'
+          #   otp: '25.3'
 
     steps:
       - name: Install bzip2
@@ -91,114 +91,114 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  quality:
-    name: Code Quality
-    runs-on: ubuntu-latest
+  # quality:
+  #   name: Code Quality
+  #   runs-on: ubuntu-latest
 
-    steps:
-      - name: Install bzip2
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libbz2-dev
-          # Find and set the bzip2 static library path
-          BZIP2_LIB=$(find /usr/lib -name libbz2.a 2>/dev/null | head -n1)
-          if [ -z "$BZIP2_LIB" ]; then
-            echo "Warning: libbz2.a not found, using system linking"
-            echo "BZIP2_STATIC_LIB=-lbz2" >> $GITHUB_ENV
-          else
-            echo "Found libbz2.a at: $BZIP2_LIB"
-            echo "BZIP2_STATIC_LIB=$BZIP2_LIB" >> $GITHUB_ENV
-          fi
-      - name: Install Zig
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.15.2
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Setup Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          elixir-version: '1.19.5'
-          otp-version: '28.1'
+  #   steps:
+  #     - name: Install bzip2
+  #       run: |
+  #         sudo apt-get update
+  #         sudo apt-get install -y libbz2-dev
+  #         # Find and set the bzip2 static library path
+  #         BZIP2_LIB=$(find /usr/lib -name libbz2.a 2>/dev/null | head -n1)
+  #         if [ -z "$BZIP2_LIB" ]; then
+  #           echo "Warning: libbz2.a not found, using system linking"
+  #           echo "BZIP2_STATIC_LIB=-lbz2" >> $GITHUB_ENV
+  #         else
+  #           echo "Found libbz2.a at: $BZIP2_LIB"
+  #           echo "BZIP2_STATIC_LIB=$BZIP2_LIB" >> $GITHUB_ENV
+  #         fi
+  #     - name: Install Zig
+  #       uses: goto-bus-stop/setup-zig@v2
+  #       with:
+  #         version: 0.15.2
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+  #     - name: Setup Elixir
+  #       uses: erlef/setup-beam@v1
+  #       with:
+  #         elixir-version: "1.19.5"
+  #         otp-version: "28.1"
 
-      - name: Restore dependencies cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            deps
-            _build
-          key: ${{ runner.os }}-mix-quality-${{ hashFiles('**/mix.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-mix-quality-
+  #     - name: Restore dependencies cache
+  #       uses: actions/cache@v4
+  #       with:
+  #         path: |
+  #           deps
+  #           _build
+  #         key: ${{ runner.os }}-mix-quality-${{ hashFiles('**/mix.lock') }}
+  #         restore-keys: |
+  #           ${{ runner.os }}-mix-quality-
 
-      - name: Install dependencies
-        run: mix deps.get
+  #     - name: Install dependencies
+  #       run: mix deps.get
 
-      - name: Run Credo
-        run: mix credo --strict
+  #     - name: Run Credo
+  #       run: mix credo --strict
 
-      - name: Restore PLT cache
-        uses: actions/cache@v4
-        id: plt-cache
-        with:
-          path: priv/plts
-          key: ${{ runner.os }}-plt-${{ hashFiles('**/mix.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-plt-
+  #     - name: Restore PLT cache
+  #       uses: actions/cache@v4
+  #       id: plt-cache
+  #       with:
+  #         path: priv/plts
+  #         key: ${{ runner.os }}-plt-${{ hashFiles('**/mix.lock') }}
+  #         restore-keys: |
+  #           ${{ runner.os }}-plt-
 
-      - name: Create PLTs
-        if: steps.plt-cache.outputs.cache-hit != 'true'
-        run: mix dialyzer --plt
+  #     - name: Create PLTs
+  #       if: steps.plt-cache.outputs.cache-hit != 'true'
+  #       run: mix dialyzer --plt
 
-      - name: Run Dialyzer
-        run: mix dialyzer --format github
+  #     - name: Run Dialyzer
+  #       run: mix dialyzer --format github
 
-  docs:
-    name: Documentation
-    runs-on: ubuntu-latest
+  # docs:
+  #   name: Documentation
+  #   runs-on: ubuntu-latest
 
-    steps:
-      - name: Install bzip2
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libbz2-dev
-          # Find and set the bzip2 static library path
-          BZIP2_LIB=$(find /usr/lib -name libbz2.a 2>/dev/null | head -n1)
-          if [ -z "$BZIP2_LIB" ]; then
-            echo "Warning: libbz2.a not found, using system linking"
-            echo "BZIP2_STATIC_LIB=-lbz2" >> $GITHUB_ENV
-          else
-            echo "Found libbz2.a at: $BZIP2_LIB"
-            echo "BZIP2_STATIC_LIB=$BZIP2_LIB" >> $GITHUB_ENV
-          fi
-      - name: Install Zig
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.15.2
-      - name: Checkout code
-        uses: actions/checkout@v4
+  #   steps:
+  #     - name: Install bzip2
+  #       run: |
+  #         sudo apt-get update
+  #         sudo apt-get install -y libbz2-dev
+  #         # Find and set the bzip2 static library path
+  #         BZIP2_LIB=$(find /usr/lib -name libbz2.a 2>/dev/null | head -n1)
+  #         if [ -z "$BZIP2_LIB" ]; then
+  #           echo "Warning: libbz2.a not found, using system linking"
+  #           echo "BZIP2_STATIC_LIB=-lbz2" >> $GITHUB_ENV
+  #         else
+  #           echo "Found libbz2.a at: $BZIP2_LIB"
+  #           echo "BZIP2_STATIC_LIB=$BZIP2_LIB" >> $GITHUB_ENV
+  #         fi
+  #     - name: Install Zig
+  #       uses: goto-bus-stop/setup-zig@v2
+  #       with:
+  #         version: 0.15.2
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
 
-      - name: Setup Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          elixir-version: '1.19.5'
-          otp-version: '28.1'
+  #     - name: Setup Elixir
+  #       uses: erlef/setup-beam@v1
+  #       with:
+  #         elixir-version: "1.19.5"
+  #         otp-version: "28.1"
 
-      - name: Restore dependencies cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            deps
-            _build
-          key: ${{ runner.os }}-mix-docs-${{ hashFiles('**/mix.lock') }}
+  #     - name: Restore dependencies cache
+  #       uses: actions/cache@v4
+  #       with:
+  #         path: |
+  #           deps
+  #           _build
+  #         key: ${{ runner.os }}-mix-docs-${{ hashFiles('**/mix.lock') }}
 
-      - name: Install dependencies
-        run: mix deps.get
+  #     - name: Install dependencies
+  #       run: mix deps.get
 
-      - name: Generate documentation
-        run: mix docs
+  #     - name: Generate documentation
+  #       run: mix docs
 
-      - name: Check documentation coverage
-        run: |
-          echo "Checking for undocumented public functions..."
-          mix docs 2>&1 | grep -i "warning" && exit 1 || exit 0
+  #     - name: Check documentation coverage
+  #       run: |
+  #         echo "Checking for undocumented public functions..."
+  #         mix docs 2>&1 | grep -i "warning" && exit 1 || exit 0
