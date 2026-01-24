@@ -88,13 +88,14 @@ jobs:
         # Excluded (require external services):
         # ✗ S3, GCS, Azure, MongoDB, Mnesia
         #
+        # Exclusions are configured in test/test_helper.exs
         # To run all tests locally:
         # mix test --include s3 --include gcs --include azure --include mongo --include mnesia
-        run: mix test --trace --exclude s3 --exclude gcs --exclude azure --exclude mongo --exclude mnesia
+        run: mix test --trace
 
       - name: Run tests with coverage
         if: ${{ matrix.coverage }}
-        run: mix coveralls.github --exclude s3 --exclude gcs --exclude azure --exclude mongo --exclude mnesia
+        run: mix coveralls.github
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
