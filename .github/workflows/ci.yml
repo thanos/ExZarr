@@ -85,7 +85,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
+      - name: Install bzip2
+        run: sudo apt-get update && sudo apt-get install -y libbz2-dev
       - name: Setup Elixir
         uses: erlef/setup-beam@v1
         with:
