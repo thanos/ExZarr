@@ -23,7 +23,7 @@ These tests run without external dependencies and are executed in CI:
 - ✅ Property-based tests
 - ✅ Custom codec/storage plugins
 
-**Total**: 338 tests
+**Total**: 324 tests
 
 ### Integration Tests (Excluded from CI)
 
@@ -36,7 +36,10 @@ These tests require external services and are excluded by default:
 - ❌ **MongoDB** - MongoDB GridFS (17 tests) - requires MongoDB running
 - ❌ **Mnesia** - BEAM distributed database (12 tests) - requires Mnesia setup
 
-**Total**: 64 tests (excluded)
+**Python Interoperability**:
+- ❌ **Python Integration** - (14 tests) - requires Python 3 + zarr + numpy
+
+**Total**: 78 tests (excluded)
 
 ## Running Tests
 
@@ -47,8 +50,8 @@ These tests require external services and are excluded by default:
 mix test
 
 # Results:
-# 338 tests passing
-# 64 tests excluded
+# 324 tests passing
+# 78 tests excluded
 # 0 failures
 ```
 
@@ -102,6 +105,9 @@ export TEST_AZURE_CONTAINER="your-test-container"
 
 # MongoDB (start local instance)
 docker run -d -p 27017:27017 mongo:5.0
+
+# Python Integration Tests
+pip3 install 'zarr>=2.10.0,<3.0.0' numpy
 ```
 
 3. **Mnesia Setup** (no external service needed, but requires initialization)
@@ -124,8 +130,11 @@ mix test --include mongo
 # Run Mnesia tests
 mix test --include mnesia
 
+# Run Python integration tests
+mix test --include python
+
 # Run all integration tests
-mix test --include s3 --include gcs --include azure --include mongo --include mnesia
+mix test --include s3 --include gcs --include azure --include mongo --include mnesia --include python
 ```
 
 ## CI Configuration
@@ -138,11 +147,11 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) runs only self-containe
   # ✓ Memory, ETS, Mock, Filesystem, Zip
   #
   # Excluded (require external services):
-  # ✗ S3, GCS, Azure, MongoDB, Mnesia
+  # ✗ S3, GCS, Azure, MongoDB, Mnesia, Python Integration
   run: mix test --trace
 ```
 
-Integration tests are excluded via the configuration in `test/test_helper.exs`, which excludes the tags `:s3`, `:gcs`, `:azure`, `:mongo`, and `:mnesia` by default.
+Integration tests are excluded via the configuration in `test/test_helper.exs`, which excludes the tags `:s3`, `:gcs`, `:azure`, `:mongo`, `:mnesia`, and `:python` by default.
 
 ### Why This Strategy?
 
@@ -199,7 +208,7 @@ end
 Update `test/test_helper.exs` to exclude the new tag:
 
 ```elixir
-ExUnit.configure(exclude: [:s3, :gcs, :azure, :mongo, :mnesia, :new_cloud_backend])
+ExUnit.configure(exclude: [:s3, :gcs, :azure, :mongo, :mnesia, :python, :new_cloud_backend])
 ```
 
 ## Troubleshooting
@@ -221,9 +230,9 @@ ExUnit.configure(exclude: [:s3, :gcs, :azure, :mongo, :mnesia, :new_cloud_backen
 
 **Current Status**:
 - Total tests: 402
-- CI tests: 338 (84%)
-- Integration tests: 64 (16%)
-- Pass rate: 100% (338/338 in CI)
+- CI tests: 324 (81%)
+- Integration tests: 78 (19%)
+- Pass rate: 100% (324/324 in CI)
 
 **Coverage by Category**:
 - Storage backends: 5 self-contained, 5 integration
@@ -231,6 +240,7 @@ ExUnit.configure(exclude: [:s3, :gcs, :azure, :mongo, :mnesia, :new_cloud_backen
 - Filters: 6 filters fully tested
 - Core operations: Comprehensive coverage
 - Property tests: 21 properties validating correctness
+- Python interoperability: 14 integration tests (requires Python setup)
 
 ## Future Improvements
 
