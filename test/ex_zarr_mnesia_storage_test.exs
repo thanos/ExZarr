@@ -3,7 +3,6 @@ defmodule ExZarr.MnesiaStorageTest do
   alias ExZarr.Storage.Backend.Mnesia, as: MnesiaBackend
   alias ExZarr.Storage.Registry
 
-
   @moduletag :mnesia
 
   # These tests require Mnesia to be running
