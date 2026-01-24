@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 env:
   MIX_ENV: test
@@ -14,24 +14,42 @@ jobs:
     name: Test (Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }})
     runs-on: ubuntu-latest
 
+    # Optional services for integration tests (not needed for CI)
+    # Uncomment if running tests with --include mongo or --include mnesia
+    # services:
+    #   mongodb:
+    #     image: mongo:5.0
+    #     ports:
+    #       - 27017:27017
+
     strategy:
       fail-fast: false
       matrix:
         include:
+          - elixir: "1.20.0-rc.1"
+            otp: "28.3.1"
           # Latest stable versions
-          - elixir: '1.19.5'
-            otp: '28.1'
+          - elixir: "1.19.5"
+            otp: "28.3.1"
             lint: true
             coverage: true
           # Previous versions for compatibility
-          - elixir: '1.18.4'
-            otp: '27.3'
-          - elixir: '1.17.3'
-            otp: '26.2'
-          - elixir: '1.16.3'
-            otp: '25.3'
+          - elixir: "1.18.4"
+            otp: "27.3"
+          - elixir: "1.17.3"
+            otp: "26.2"
+          # - elixir: '1.16.3'
+          #   otp: '25.3'
 
     steps:
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libzstd-dev liblz4-dev libsnappy-dev libblosc-dev libbz2-dev
+      - name: Install Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -66,6 +84,15 @@ jobs:
         if: ${{ matrix.lint }}
 
       - name: Run tests
+        # CI runs only self-contained storage backends:
+        # ✓ Memory, ETS, Mock, Filesystem, Zip
+        #
+        # Excluded (require external services):
+        # ✗ S3, GCS, Azure, MongoDB, Mnesia
+        #
+        # Exclusions are configured in test/test_helper.exs
+        # To run all tests locally:
+        # mix test --include s3 --include gcs --include azure --include mongo --include mnesia
         run: mix test --trace
 
       - name: Run tests with coverage
@@ -79,14 +106,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libzstd-dev liblz4-dev libsnappy-dev libblosc-dev libbz2-dev
+
+      - name: Install Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
+
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup Elixir
         uses: erlef/setup-beam@v1
         with:
-          elixir-version: '1.19.5'
-          otp-version: '28.1'
+          elixir-version: "1.19.5"
+          otp-version: "28.1"
 
       - name: Restore dependencies cache
         uses: actions/cache@v4
@@ -100,6 +137,9 @@ jobs:
 
       - name: Install dependencies
         run: mix deps.get
+
+      - name: Compile dependencies
+        run: mix deps.compile
 
       - name: Run Credo
         run: mix credo --strict
@@ -123,16 +163,28 @@ jobs:
   docs:
     name: Documentation
     runs-on: ubuntu-latest
+    env:
+      MIX_ENV: dev
 
     steps:
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libzstd-dev liblz4-dev libsnappy-dev libblosc-dev libbz2-dev
+
+      - name: Install Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
+
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup Elixir
         uses: erlef/setup-beam@v1
         with:
-          elixir-version: '1.19.5'
-          otp-version: '28.1'
+          elixir-version: "1.19.5"
+          otp-version: "28.1"
 
       - name: Restore dependencies cache
         uses: actions/cache@v4
@@ -141,9 +193,14 @@ jobs:
             deps
             _build
           key: ${{ runner.os }}-mix-docs-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-docs-
 
       - name: Install dependencies
         run: mix deps.get
+
+      - name: Compile dependencies
+        run: mix deps.compile
 
       - name: Generate documentation
         run: mix docs

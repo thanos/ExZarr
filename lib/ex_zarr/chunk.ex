@@ -165,7 +165,7 @@ defmodule ExZarr.Chunk do
       start_chunk
       |> Tuple.to_list()
       |> Enum.zip(Tuple.to_list(stop_chunk))
-      |> Enum.map(fn {start, stop} -> start..stop end)
+      |> Enum.map(fn {start, stop} -> Range.new(start, stop, 1) end)
 
     cartesian_product_to_tuples(ranges)
   end

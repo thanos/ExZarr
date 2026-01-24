@@ -57,7 +57,6 @@ defmodule ExZarr.Codecs.ZigCodecs do
 
   # Get library paths from configuration (supports environment variable overrides)
   @library_dirs CompressionConfig.library_dirs()
-  @bzip2_static_lib CompressionConfig.bzip2_static_lib()
 
   use Zig,
     otp_app: :ex_zarr,
@@ -68,8 +67,8 @@ defmodule ExZarr.Codecs.ZigCodecs do
         {:system, "lz4"},
         {:system, "snappy"},
         {:system, "blosc"},
-        # Static library (full path)
-        @bzip2_static_lib
+        # Use dynamic linking for bzip2 to avoid PIC issues on Linux
+        {:system, "bz2"}
       ]
     ]
 

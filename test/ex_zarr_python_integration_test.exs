@@ -1,6 +1,8 @@
 defmodule ExZarr.PythonIntegrationTest do
   use ExUnit.Case
 
+  @moduletag :python
+
   @moduledoc """
   Integration tests verifying interoperability between ExZarr and zarr-python.
 

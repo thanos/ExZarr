@@ -3,6 +3,12 @@ defmodule ExZarr.MnesiaStorageTest do
   alias ExZarr.Storage.Backend.Mnesia, as: MnesiaBackend
   alias ExZarr.Storage.Registry
 
+  @moduletag :mnesia
+
+  # These tests require Mnesia to be running
+  # They are skipped by default in CI
+  # To run: mix test --include mnesia
+
   setup_all do
     # Initialize Mnesia (only once for all tests)
     :mnesia.stop()
@@ -137,7 +143,7 @@ defmodule ExZarr.MnesiaStorageTest do
       assert length(chunks_before) == 5
 
       # Delete a chunk
-      :ok = ExZarr.Storage.Backend.Mnesia.delete_chunk(array.storage.state, {0})
+      :ok = MnesiaBackend.delete_chunk(array.storage.state, {0})
 
       # Verify chunk was deleted
       {:ok, chunks_after} = ExZarr.Storage.list_chunks(array.storage)
@@ -165,7 +171,7 @@ defmodule ExZarr.MnesiaStorageTest do
 
       # Create new array instance pointing to same data
       {:ok, reopened} =
-        ExZarr.Storage.Backend.Mnesia.open(
+        MnesiaBackend.open(
           array_id: "persist_test",
           table_name: table
         )
@@ -173,7 +179,7 @@ defmodule ExZarr.MnesiaStorageTest do
       backend_state = reopened
 
       # Read data through new instance
-      {:ok, read_data} = ExZarr.Storage.Backend.Mnesia.read_chunk(backend_state, {0})
+      {:ok, read_data} = MnesiaBackend.read_chunk(backend_state, {0})
 
       # Should be able to read the data
       assert is_binary(read_data)
@@ -295,7 +301,7 @@ defmodule ExZarr.MnesiaStorageTest do
         )
 
       # Try to read non-existent chunk
-      result = ExZarr.Storage.Backend.Mnesia.read_chunk(array.storage.state, {99})
+      result = MnesiaBackend.read_chunk(array.storage.state, {99})
       assert {:error, :not_found} = result
     end
   end

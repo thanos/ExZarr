@@ -1,6 +1,8 @@
 defmodule ExZarr.AzureBlobStorageTest do
   use ExUnit.Case
 
+  alias ExZarr.Storage.Backend.AzureBlob
+
   @moduletag :azure
 
   # These tests validate the Azure Blob backend configuration and logic
@@ -10,7 +12,7 @@ defmodule ExZarr.AzureBlobStorageTest do
   describe "Configuration validation" do
     test "requires account_name parameter" do
       result =
-        ExZarr.Storage.Backend.AzureBlob.init(
+        AzureBlob.init(
           account_key: "key",
           container: "test-container"
         )
@@ -20,7 +22,7 @@ defmodule ExZarr.AzureBlobStorageTest do
 
     test "requires account_key parameter" do
       result =
-        ExZarr.Storage.Backend.AzureBlob.init(
+        AzureBlob.init(
           account_name: "testaccount",
           container: "test-container"
         )
@@ -30,7 +32,7 @@ defmodule ExZarr.AzureBlobStorageTest do
 
     test "requires container parameter" do
       result =
-        ExZarr.Storage.Backend.AzureBlob.init(
+        AzureBlob.init(
           account_name: "testaccount",
           account_key: "key"
         )
@@ -48,7 +50,7 @@ defmodule ExZarr.AzureBlobStorageTest do
             prefix: "arrays/experiment1"
           ]
 
-          result = ExZarr.Storage.Backend.AzureBlob.init(config)
+          result = AzureBlob.init(config)
 
           case result do
             {:ok, state} ->
@@ -76,7 +78,7 @@ defmodule ExZarr.AzureBlobStorageTest do
             container: "test"
           ]
 
-          result = ExZarr.Storage.Backend.AzureBlob.init(config)
+          result = AzureBlob.init(config)
 
           case result do
             {:ok, state} ->
@@ -94,7 +96,7 @@ defmodule ExZarr.AzureBlobStorageTest do
 
   describe "Backend info" do
     test "returns correct backend_id" do
-      assert ExZarr.Storage.Backend.AzureBlob.backend_id() == :azure_blob
+      assert AzureBlob.backend_id() == :azure_blob
     end
   end
 
@@ -129,7 +131,7 @@ defmodule ExZarr.AzureBlobStorageTest do
 
         {:error, :nofile} ->
           # Module should still be loadable even without azurex
-          assert Code.ensure_loaded?(ExZarr.Storage.Backend.AzureBlob)
+          assert Code.ensure_loaded?(AzureBlob)
       end
     end
 
@@ -162,7 +164,7 @@ defmodule ExZarr.AzureBlobStorageTest do
 
       case Code.ensure_loaded(Azurex.Blob.Client) do
         {:module, _} ->
-          result = ExZarr.Storage.Backend.AzureBlob.init(config)
+          result = AzureBlob.init(config)
 
           case result do
             {:ok, state} ->
