@@ -301,7 +301,7 @@ defmodule ExZarr.MnesiaStorageTest do
         )
 
       # Try to read non-existent chunk
-      result = ExZarr.Storage.Backend.Mnesia.read_chunk(array.storage.state, {99})
+      result = MnesiaBackend.read_chunk(array.storage.state, {99})
       assert {:error, :not_found} = result
     end
   end
