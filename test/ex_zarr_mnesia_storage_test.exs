@@ -2,7 +2,7 @@ defmodule ExZarr.MnesiaStorageTest do
   use ExUnit.Case
   alias ExZarr.Storage.Backend.Mnesia, as: MnesiaBackend
   alias ExZarr.Storage.Registry
-  al
+
 
   @moduletag :mnesia
 
@@ -302,7 +302,7 @@ defmodule ExZarr.MnesiaStorageTest do
         )
 
       # Try to read non-existent chunk
-      result = MnesiaBackend.read_chunk(array.storage.state, {99})
+      result = ExZarr.Storage.Backend.Mnesia.read_chunk(array.storage.state, {99})
       assert {:error, :not_found} = result
     end
   end
