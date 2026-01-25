@@ -52,6 +52,7 @@ defmodule ExZarr.Array do
   alias ExZarr.{Codecs, DataType, Metadata, MetadataV3, Storage}
   alias ExZarr.Codecs.PipelineV3
   alias ExZarr.Codecs.Registry
+  alias ExZarr.Codecs.ShardingIndexed
 
   @impl GenServer
   def init(init_arg) do
@@ -533,6 +534,15 @@ defmodule ExZarr.Array do
   end
 
   defp read_chunks(array, chunk_indices) do
+    # Check if sharding is enabled for v3 arrays
+    if array.version == 3 and sharding_enabled?(array) do
+      read_chunks_with_sharding(array, chunk_indices)
+    else
+      read_chunks_without_sharding(array, chunk_indices)
+    end
+  end
+
+  defp read_chunks_without_sharding(array, chunk_indices) do
     chunks =
       chunk_indices
       |> Enum.map(fn index ->
@@ -557,13 +567,145 @@ defmodule ExZarr.Array do
     end
   end
 
+  defp read_chunks_with_sharding(array, chunk_indices) do
+    # Get sharding codec configuration
+    sharding_codec = get_sharding_codec(array)
+
+    # Read each shard and extract requested chunks
+    chunks =
+      chunk_indices
+      |> Enum.map(fn chunk_idx ->
+        shard_idx = calculate_shard_index(chunk_idx, sharding_codec.chunk_shape)
+
+        case Storage.read_chunk(array.storage, shard_idx) do
+          {:ok, shard_data} ->
+            # Extract specific chunk from shard
+            alias ExZarr.Codecs.ShardingIndexed
+
+            case ShardingIndexed.decode_chunk(shard_data, chunk_idx, sharding_codec) do
+              {:ok, chunk_data} ->
+                # Apply inner codecs to decode chunk data
+                apply_inner_codecs_decode(chunk_data, sharding_codec.codecs, array)
+
+              {:error, {:chunk_not_found, _}} ->
+                # Chunk not in shard, return fill chunk
+                {:ok, create_fill_chunk(array)}
+
+              {:error, reason} ->
+                {:error, reason}
+            end
+
+          {:error, :not_found} ->
+            # Shard doesn't exist, return fill chunk
+            {:ok, create_fill_chunk(array)}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+      end)
+
+    # Check for errors
+    errors = Enum.filter(chunks, &match?({:error, _}, &1))
+
+    if Enum.empty?(errors) do
+      chunk_data = Enum.map(chunks, fn {:ok, data} -> data end)
+      {:ok, chunk_data}
+    else
+      {:error, :read_failed}
+    end
+  end
+
   defp write_chunks(array, chunks, indices) do
+    # Check if sharding is enabled for v3 arrays
+    if array.version == 3 and sharding_enabled?(array) do
+      write_chunks_with_sharding(array, chunks, indices)
+    else
+      write_chunks_without_sharding(array, chunks, indices)
+    end
+  end
+
+  defp write_chunks_without_sharding(array, chunks, indices) do
     results =
       Enum.zip(chunks, indices)
       |> Enum.map(fn {chunk_data, index} ->
         # Version-aware codec encoding
         with {:ok, compressed} <- apply_codec_pipeline_encode(array, chunk_data) do
           Storage.write_chunk(array.storage, index, compressed)
+        end
+      end)
+
+    if Enum.all?(results, &(&1 == :ok)) do
+      :ok
+    else
+      {:error, :write_failed}
+    end
+  end
+
+  defp write_chunks_with_sharding(array, chunks, indices) do
+    alias ExZarr.Codecs.ShardingIndexed
+
+    # Get sharding codec configuration
+    sharding_codec = get_sharding_codec(array)
+
+    # Group chunks by shard
+    chunks_by_shard =
+      Enum.zip(chunks, indices)
+      |> Enum.group_by(
+        fn {_chunk_data, chunk_idx} ->
+          calculate_shard_index(chunk_idx, sharding_codec.chunk_shape)
+        end,
+        fn {chunk_data, chunk_idx} -> {chunk_idx, chunk_data} end
+      )
+
+    # Process each shard
+    results =
+      chunks_by_shard
+      |> Enum.map(fn {shard_idx, chunk_updates} ->
+        # Read existing shard or create empty map
+        existing_chunks =
+          case Storage.read_chunk(array.storage, shard_idx) do
+            {:ok, shard_data} ->
+              case ShardingIndexed.decode(shard_data, sharding_codec) do
+                {:ok, chunks_map} -> chunks_map
+                {:error, _} -> %{}
+              end
+
+            {:error, :not_found} ->
+              %{}
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+
+        # Apply updates to existing chunks
+        updated_chunks =
+          if is_map(existing_chunks) do
+            Enum.reduce(chunk_updates, existing_chunks, fn {chunk_idx, chunk_data}, acc ->
+              # Encode chunk data with inner codecs
+              case apply_inner_codecs_encode(chunk_data, sharding_codec.codecs, array) do
+                {:ok, encoded_chunk} ->
+                  Map.put(acc, chunk_idx, encoded_chunk)
+
+                {:error, _reason} ->
+                  acc
+              end
+            end)
+          else
+            # Error reading existing chunks
+            existing_chunks
+          end
+
+        # Encode updated shard and write to storage
+        if is_map(updated_chunks) do
+          case ShardingIndexed.encode(updated_chunks, sharding_codec) do
+            {:ok, shard_data} ->
+              Storage.write_chunk(array.storage, shard_idx, shard_data)
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+        else
+          updated_chunks
         end
       end)
 
@@ -1053,6 +1195,79 @@ defmodule ExZarr.Array do
     for x <- range, rest_item <- rest_product do
       [x | rest_item]
     end
+  end
+
+  # Sharding helper functions
+
+  defp sharding_enabled?(array) do
+    case array.metadata do
+      %ExZarr.MetadataV3{codecs: codecs} when is_list(codecs) ->
+        Enum.any?(codecs, fn codec ->
+          (is_map(codec) and Map.get(codec, :name) == "sharding_indexed") or
+            (is_map(codec) and Map.get(codec, "name") == "sharding_indexed")
+        end)
+
+      _ ->
+        false
+    end
+  end
+
+  defp get_sharding_codec(array) do
+    case array.metadata do
+      %ExZarr.MetadataV3{codecs: codecs} when is_list(codecs) ->
+        sharding_spec =
+          Enum.find(codecs, fn codec ->
+            (is_map(codec) and Map.get(codec, :name) == "sharding_indexed") or
+              (is_map(codec) and Map.get(codec, "name") == "sharding_indexed")
+          end)
+
+        if sharding_spec do
+          config =
+            Map.get(sharding_spec, :configuration) || Map.get(sharding_spec, "configuration") ||
+              %{}
+
+          {:ok, codec} = ShardingIndexed.init(config)
+          codec
+        else
+          nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp calculate_shard_index(chunk_index, shard_chunk_shape) do
+    chunk_list = Tuple.to_list(chunk_index)
+    shard_shape_list = Tuple.to_list(shard_chunk_shape)
+
+    shard_indices =
+      Enum.zip(chunk_list, shard_shape_list)
+      |> Enum.map(fn {chunk_coord, shard_size} ->
+        div(chunk_coord, shard_size)
+      end)
+
+    List.to_tuple(shard_indices)
+  end
+
+  defp apply_inner_codecs_decode(chunk_data, inner_codecs, array) do
+    # Inner codecs are the codecs used for individual chunks within the shard
+    # These should be applied after extracting the chunk from the shard
+    alias ExZarr.Codecs.PipelineV3
+
+    {:ok, pipeline} = PipelineV3.parse_codecs(inner_codecs)
+    opts = [itemsize: ExZarr.DataType.itemsize(array.dtype), dtype: array.dtype]
+    PipelineV3.decode(chunk_data, pipeline, opts)
+  end
+
+  defp apply_inner_codecs_encode(chunk_data, inner_codecs, array) do
+    # Inner codecs are the codecs used for individual chunks within the shard
+    # These should be applied before adding the chunk to the shard
+    alias ExZarr.Codecs.PipelineV3
+
+    {:ok, pipeline} = PipelineV3.parse_codecs(inner_codecs)
+    opts = [itemsize: ExZarr.DataType.itemsize(array.dtype), dtype: array.dtype]
+    PipelineV3.encode(chunk_data, pipeline, opts)
   end
 
   # Index validation functions

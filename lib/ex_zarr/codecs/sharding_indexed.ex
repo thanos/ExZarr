@@ -191,6 +191,10 @@ defmodule ExZarr.Codecs.ShardingIndexed do
     {:ok, shape}
   end
 
+  defp parse_chunk_shape(%{chunk_shape: shape}) when is_list(shape) do
+    {:ok, List.to_tuple(shape)}
+  end
+
   defp parse_chunk_shape(_), do: {:error, :missing_chunk_shape}
 
   defp parse_codecs(%{"codecs" => codecs}) when is_list(codecs), do: {:ok, codecs}
