@@ -21,7 +21,7 @@ Add `ex_zarr` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_zarr, "~> 0.3.1"}
+    {:ex_zarr, "~> 0.4.0"}
   ]
 end
 ```
