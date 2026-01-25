@@ -66,7 +66,7 @@ defmodule ExZarr.MixProject do
       {:jason, "~> 1.4"},
 
       # Zig NIFs for compression codecs
-      {:zigler, "~> 0.13.0", runtime: false},
+      {:zigler, "~> 0.13", runtime: false},
 
       # Cloud storage backends (optional)
       {:ex_aws, "~> 2.5", optional: true},
@@ -119,7 +119,8 @@ defmodule ExZarr.MixProject do
       extras: [
         "README.md",
         "CHANGELOG.md",
-        "INTEROPERABILITY.md"
+        "INTEROPERABILITY.md",
+        "docs/V2_TO_V3_MIGRATION.md"
       ],
       groups_for_extras: [
         Guides: ~r/INTEROPERABILITY/,
