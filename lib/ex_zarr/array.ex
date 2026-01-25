@@ -239,6 +239,102 @@ defmodule ExZarr.Array do
     Storage.write_metadata(array.storage, array.metadata, opts)
   end
 
+  # Parse slice options - supports both numeric (:start, :stop) and named dimensions
+  defp parse_slice_options(array, opts) do
+    # Check if any named dimensions are provided
+    named_dims = get_named_dimensions(array, opts)
+
+    if Enum.empty?(named_dims) do
+      # No named dimensions, use numeric start/stop
+      start = Keyword.get(opts, :start, tuple_of_zeros(array.shape))
+      stop = Keyword.get(opts, :stop)
+
+      # Calculate stop from data size if not provided and data is present (for set_slice)
+      stop =
+        if stop do
+          stop
+        else
+          array.shape
+        end
+
+      {:ok, {start, stop}}
+    else
+      # Named dimensions provided - convert to numeric
+      convert_named_to_numeric(array, opts, named_dims)
+    end
+  end
+
+  defp get_named_dimensions(array, opts) do
+    case array.metadata do
+      %ExZarr.MetadataV3{dimension_names: names} when is_list(names) ->
+        # Get all options that match dimension names
+        Enum.filter(opts, fn {key, _value} ->
+          key != :start and key != :stop and
+            Atom.to_string(key) in Enum.filter(names, &(&1 != nil))
+        end)
+
+      _ ->
+        []
+    end
+  end
+
+  defp convert_named_to_numeric(array, opts, _named_dims) do
+    case array.metadata do
+      %ExZarr.MetadataV3{dimension_names: names} when is_list(names) ->
+        ndim = tuple_size(array.shape)
+
+        # Build start and stop lists
+        {start_list, stop_list} =
+          Enum.reduce(0..(ndim - 1), {[], []}, fn dim_idx, {start_acc, stop_acc} ->
+            dim_name = Enum.at(names, dim_idx)
+            dim_size = elem(array.shape, dim_idx)
+
+            # Check if this dimension has a named option
+            named_value =
+              if dim_name do
+                dim_key = String.to_atom(dim_name)
+                Keyword.get(opts, dim_key)
+              else
+                nil
+              end
+
+            {start_val, stop_val} =
+              case named_value do
+                %Range{first: first, last: last} ->
+                  # Range like 0..30 means start=0, stop=31 (inclusive to exclusive)
+                  {first, last + 1}
+
+                {start, stop} ->
+                  # Tuple like {0, 31}
+                  {start, stop}
+
+                val when is_integer(val) ->
+                  # Single value means start=val, stop=val+1
+                  {val, val + 1}
+
+                nil ->
+                  # Not specified - check for :start/:stop fallback
+                  start_tuple = Keyword.get(opts, :start)
+                  stop_tuple = Keyword.get(opts, :stop)
+
+                  start_from_tuple = if start_tuple, do: elem(start_tuple, dim_idx), else: 0
+
+                  stop_from_tuple =
+                    if stop_tuple, do: elem(stop_tuple, dim_idx), else: dim_size
+
+                  {start_from_tuple, stop_from_tuple}
+              end
+
+            {start_acc ++ [start_val], stop_acc ++ [stop_val]}
+          end)
+
+        {:ok, {List.to_tuple(start_list), List.to_tuple(stop_list)}}
+
+      _ ->
+        {:error, {:no_dimension_names, "Array does not have dimension names defined"}}
+    end
+  end
+
   @doc """
   Gets a slice of data from the array.
 
@@ -251,12 +347,24 @@ defmodule ExZarr.Array do
   - `:start` - Starting index for each dimension (default: all zeros)
   - `:stop` - Stopping index for each dimension (default: array shape)
 
+  Named dimensions (v3 arrays only):
+  - Use dimension names as options with Range or tuple values
+  - Example: `time: 0..30, latitude: 0..179, longitude: 0..359`
+  - Range values are inclusive (0..30 means elements 0 through 30)
+
   ## Examples
 
-      # Read a 100x100 region from a larger array
+      # Read a 100x100 region from a larger array (numeric)
       {:ok, data} = ExZarr.Array.get_slice(array,
         start: {0, 0},
         stop: {100, 100}
+      )
+
+      # Read using named dimensions (v3 arrays)
+      {:ok, data} = ExZarr.Array.get_slice(array,
+        time: 0..30,
+        latitude: 0..179,
+        longitude: 0..359
       )
 
       # Read entire first row of a 2D array
@@ -272,13 +380,13 @@ defmodule ExZarr.Array do
   """
   @spec get_slice(t(), keyword()) :: {:ok, binary()} | {:error, term()}
   def get_slice(array, opts) do
-    start = Keyword.get(opts, :start, tuple_of_zeros(array.shape))
-    stop = Keyword.get(opts, :stop, array.shape)
-
-    with :ok <- validate_indices(start, stop, array.shape),
-         {:ok, chunk_indices} <- calculate_chunk_indices(array, start, stop),
-         {:ok, chunks} <- read_chunks(array, chunk_indices) do
-      assemble_slice(array, chunks, start, stop)
+    # Parse slice options - supports both numeric (:start, :stop) and named dimensions
+    with {:ok, {start, stop}} <- parse_slice_options(array, opts) do
+      with :ok <- validate_indices(start, stop, array.shape),
+           {:ok, chunk_indices} <- calculate_chunk_indices(array, start, stop),
+           {:ok, chunks} <- read_chunks(array, chunk_indices) do
+        assemble_slice(array, chunks, start, stop)
+      end
     end
   end
 
@@ -322,22 +430,14 @@ defmodule ExZarr.Array do
   def set_slice(array, data, opts) do
     # Validate that data is binary
     if is_binary(data) do
-      start = Keyword.get(opts, :start, tuple_of_zeros(array.shape))
-      stop = Keyword.get(opts, :stop)
-
-      # Calculate stop from data size if not provided (for 1D arrays)
-      stop =
-        if stop do
-          stop
-        else
-          calculate_stop_from_data(array, data, start)
+      # Parse slice options - supports both numeric and named dimensions
+      with {:ok, {start, stop}} <- parse_slice_options(array, opts) do
+        with :ok <- validate_indices(start, stop, array.shape),
+             :ok <- validate_write_data_size(data, start, stop, array.dtype),
+             {:ok, chunk_indices} <- calculate_chunk_indices(array, start, stop),
+             {:ok, chunks} <- split_into_chunks(array, data, start, stop) do
+          write_chunks(array, chunks, chunk_indices)
         end
-
-      with :ok <- validate_indices(start, stop, array.shape),
-           :ok <- validate_write_data_size(data, start, stop, array.dtype),
-           {:ok, chunk_indices} <- calculate_chunk_indices(array, start, stop),
-           {:ok, chunks} <- split_into_chunks(array, data, start, stop) do
-        write_chunks(array, chunks, chunk_indices)
       end
     else
       {:error, {:invalid_data, "data must be binary, got: #{inspect(data)}"}}

@@ -284,8 +284,9 @@ defmodule ExZarr.MetadataV3 do
          :ok <- validate_required_field(metadata.chunk_key_encoding, :chunk_key_encoding),
          :ok <- validate_required_field(metadata.codecs, :codecs),
          :ok <- validate_shape(metadata.shape),
-         :ok <- validate_data_type(metadata.data_type) do
-      validate_chunk_grid(metadata.chunk_grid)
+         :ok <- validate_data_type(metadata.data_type),
+         :ok <- validate_chunk_grid(metadata.chunk_grid) do
+      validate_dimension_names(metadata.dimension_names, metadata.shape)
     end
   end
 
@@ -355,6 +356,77 @@ defmodule ExZarr.MetadataV3 do
 
   defp validate_chunk_grid(other),
     do: {:error, {:invalid_chunk_grid, "Expected map with 'name' field, got: #{inspect(other)}"}}
+
+  @doc false
+  @spec validate_dimension_names([String.t() | nil] | nil, tuple()) ::
+          :ok | {:error, {:invalid_dimension_names, String.t()}}
+  defp validate_dimension_names(nil, _shape), do: :ok
+  defp validate_dimension_names([], _shape), do: :ok
+
+  defp validate_dimension_names(names, shape) when is_list(names) do
+    ndim = tuple_size(shape)
+
+    with :ok <- validate_dimension_names_count(names, ndim),
+         :ok <- validate_dimension_names_format(names) do
+      validate_dimension_names_unique(names)
+    end
+  end
+
+  defp validate_dimension_names(other, _shape),
+    do:
+      {:error,
+       {:invalid_dimension_names, "Expected list of strings or nil, got: #{inspect(other)}"}}
+
+  defp validate_dimension_names_count(names, ndim) do
+    if length(names) == ndim do
+      :ok
+    else
+      {:error,
+       {:invalid_dimension_names,
+        "Dimension names count (#{length(names)}) must match shape dimensions (#{ndim})"}}
+    end
+  end
+
+  defp validate_dimension_names_format(names) do
+    invalid =
+      Enum.find(names, fn name ->
+        case name do
+          nil -> false
+          name when is_binary(name) -> not valid_dimension_name?(name)
+          _ -> true
+        end
+      end)
+
+    case invalid do
+      nil ->
+        :ok
+
+      name ->
+        {:error,
+         {:invalid_dimension_names,
+          "Invalid dimension name: #{inspect(name)}. Must be string with alphanumeric, underscore, or hyphen characters"}}
+    end
+  end
+
+  defp validate_dimension_names_unique(names) do
+    # Filter out nils before checking uniqueness
+    non_nil_names = Enum.filter(names, &(&1 != nil))
+
+    if length(non_nil_names) == length(Enum.uniq(non_nil_names)) do
+      :ok
+    else
+      duplicates = non_nil_names -- Enum.uniq(non_nil_names)
+
+      {:error,
+       {:invalid_dimension_names,
+        "Duplicate dimension names found: #{inspect(Enum.uniq(duplicates))}"}}
+    end
+  end
+
+  defp valid_dimension_name?(name) when is_binary(name) do
+    # Valid dimension names: alphanumeric, underscore, hyphen, not empty
+    String.match?(name, ~r/^[a-zA-Z0-9_-]+$/)
+  end
 
   @doc false
   @spec validate_codecs(t()) :: :ok | {:error, term()}
