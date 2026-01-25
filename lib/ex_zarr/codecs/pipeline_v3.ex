@@ -79,7 +79,7 @@ defmodule ExZarr.Codecs.PipelineV3 do
     "packbits"
   ]
   @array_to_bytes_codecs ["bytes"]
-  @bytes_to_bytes_codecs ["gzip", "zstd", "blosc", "lz4", "bz2", "crc32c"]
+  @bytes_to_bytes_codecs ["gzip", "zstd", "blosc", "lz4", "bz2", "crc32c", "sharding_indexed"]
 
   @doc """
   Parses and validates a list of codec specifications.
