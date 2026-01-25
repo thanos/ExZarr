@@ -615,28 +615,28 @@ defmodule ExZarr.Array do
     {:ok, chunk_indices}
   end
 
-  defp calculate_stop_from_start_and_size(start, num_elements, shape) do
-    # For now, assume 1D writing (can be extended for multi-dimensional)
-    start_list = Tuple.to_list(start)
-    shape_list = Tuple.to_list(shape)
+  # defp calculate_stop_from_start_and_size(start, num_elements, shape) do
+  #   # For now, assume 1D writing (can be extended for multi-dimensional)
+  #   start_list = Tuple.to_list(start)
+  #   shape_list = Tuple.to_list(shape)
 
-    # Calculate how many elements fit in each dimension
-    {stop_list, _remaining} =
-      Enum.zip(start_list, shape_list)
-      |> Enum.reduce({[], num_elements}, fn {start_val, dim_size}, {acc, remaining} ->
-        available = dim_size - start_val
-        to_use = min(available, remaining)
-        {acc ++ [start_val + to_use], remaining - to_use}
-      end)
+  #   # Calculate how many elements fit in each dimension
+  #   {stop_list, _remaining} =
+  #     Enum.zip(start_list, shape_list)
+  #     |> Enum.reduce({[], num_elements}, fn {start_val, dim_size}, {acc, remaining} ->
+  #       available = dim_size - start_val
+  #       to_use = min(available, remaining)
+  #       {acc ++ [start_val + to_use], remaining - to_use}
+  #     end)
 
-    List.to_tuple(stop_list)
-  end
+  #   List.to_tuple(stop_list)
+  # end
 
-  defp calculate_stop_from_data(array, data, start) do
-    element_size = dtype_size(array.dtype)
-    num_elements = Kernel.div(byte_size(data), element_size)
-    calculate_stop_from_start_and_size(start, num_elements, array.shape)
-  end
+  # defp calculate_stop_from_data(array, data, start) do
+  #   element_size = dtype_size(array.dtype)
+  #   num_elements = Kernel.div(byte_size(data), element_size)
+  #   calculate_stop_from_start_and_size(start, num_elements, array.shape)
+  # end
 
   defp read_chunks(array, chunk_indices) do
     # Check if sharding is enabled for v3 arrays
