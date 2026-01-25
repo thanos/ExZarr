@@ -48,10 +48,11 @@ defmodule ExZarr.Array do
   """
 
   use GenServer
-
+  alias ExZarr.ChunkGrid.Irregular
   alias ExZarr.{Codecs, DataType, Metadata, MetadataV3, Storage}
   alias ExZarr.Codecs.PipelineV3
   alias ExZarr.Codecs.Registry
+  alias ExZarr.Codecs.ShardingIndexed
 
   @impl GenServer
   def init(init_arg) do
@@ -66,7 +67,9 @@ defmodule ExZarr.Array do
           fill_value: number() | nil,
           storage: Storage.t(),
           metadata: Metadata.t() | MetadataV3.t(),
-          version: 2 | 3
+          version: 2 | 3,
+          chunk_grid_module: module() | nil,
+          chunk_grid_state: struct() | nil
         }
 
   defstruct [
@@ -78,7 +81,10 @@ defmodule ExZarr.Array do
     :storage,
     :metadata,
     # Default to v2 for backward compatibility
-    version: 2
+    version: 2,
+    # Optional chunk grid support for irregular chunking
+    chunk_grid_module: nil,
+    chunk_grid_state: nil
   ]
 
   ## Public API
@@ -238,6 +244,102 @@ defmodule ExZarr.Array do
     Storage.write_metadata(array.storage, array.metadata, opts)
   end
 
+  # Parse slice options - supports both numeric (:start, :stop) and named dimensions
+  defp parse_slice_options(array, opts) do
+    # Check if any named dimensions are provided
+    named_dims = get_named_dimensions(array, opts)
+
+    if Enum.empty?(named_dims) do
+      # No named dimensions, use numeric start/stop
+      start = Keyword.get(opts, :start, tuple_of_zeros(array.shape))
+      stop = Keyword.get(opts, :stop)
+
+      # Calculate stop from data size if not provided and data is present (for set_slice)
+      stop =
+        if stop do
+          stop
+        else
+          array.shape
+        end
+
+      {:ok, {start, stop}}
+    else
+      # Named dimensions provided - convert to numeric
+      convert_named_to_numeric(array, opts, named_dims)
+    end
+  end
+
+  defp get_named_dimensions(array, opts) do
+    case array.metadata do
+      %ExZarr.MetadataV3{dimension_names: names} when is_list(names) ->
+        # Get all options that match dimension names
+        Enum.filter(opts, fn {key, _value} ->
+          key != :start and key != :stop and
+            Atom.to_string(key) in Enum.filter(names, &(&1 != nil))
+        end)
+
+      _ ->
+        []
+    end
+  end
+
+  defp convert_named_to_numeric(array, opts, _named_dims) do
+    case array.metadata do
+      %ExZarr.MetadataV3{dimension_names: names} when is_list(names) ->
+        ndim = tuple_size(array.shape)
+
+        # Build start and stop lists
+        {start_list, stop_list} =
+          Enum.reduce(0..(ndim - 1), {[], []}, fn dim_idx, {start_acc, stop_acc} ->
+            dim_name = Enum.at(names, dim_idx)
+            dim_size = elem(array.shape, dim_idx)
+
+            # Check if this dimension has a named option
+            named_value =
+              if dim_name do
+                dim_key = String.to_atom(dim_name)
+                Keyword.get(opts, dim_key)
+              else
+                nil
+              end
+
+            {start_val, stop_val} =
+              case named_value do
+                %Range{first: first, last: last} ->
+                  # Range like 0..30 means start=0, stop=31 (inclusive to exclusive)
+                  {first, last + 1}
+
+                {start, stop} ->
+                  # Tuple like {0, 31}
+                  {start, stop}
+
+                val when is_integer(val) ->
+                  # Single value means start=val, stop=val+1
+                  {val, val + 1}
+
+                nil ->
+                  # Not specified - check for :start/:stop fallback
+                  start_tuple = Keyword.get(opts, :start)
+                  stop_tuple = Keyword.get(opts, :stop)
+
+                  start_from_tuple = if start_tuple, do: elem(start_tuple, dim_idx), else: 0
+
+                  stop_from_tuple =
+                    if stop_tuple, do: elem(stop_tuple, dim_idx), else: dim_size
+
+                  {start_from_tuple, stop_from_tuple}
+              end
+
+            {start_acc ++ [start_val], stop_acc ++ [stop_val]}
+          end)
+
+        {:ok, {List.to_tuple(start_list), List.to_tuple(stop_list)}}
+
+      _ ->
+        {:error, {:no_dimension_names, "Array does not have dimension names defined"}}
+    end
+  end
+
   @doc """
   Gets a slice of data from the array.
 
@@ -250,12 +352,24 @@ defmodule ExZarr.Array do
   - `:start` - Starting index for each dimension (default: all zeros)
   - `:stop` - Stopping index for each dimension (default: array shape)
 
+  Named dimensions (v3 arrays only):
+  - Use dimension names as options with Range or tuple values
+  - Example: `time: 0..30, latitude: 0..179, longitude: 0..359`
+  - Range values are inclusive (0..30 means elements 0 through 30)
+
   ## Examples
 
-      # Read a 100x100 region from a larger array
+      # Read a 100x100 region from a larger array (numeric)
       {:ok, data} = ExZarr.Array.get_slice(array,
         start: {0, 0},
         stop: {100, 100}
+      )
+
+      # Read using named dimensions (v3 arrays)
+      {:ok, data} = ExZarr.Array.get_slice(array,
+        time: 0..30,
+        latitude: 0..179,
+        longitude: 0..359
       )
 
       # Read entire first row of a 2D array
@@ -271,13 +385,13 @@ defmodule ExZarr.Array do
   """
   @spec get_slice(t(), keyword()) :: {:ok, binary()} | {:error, term()}
   def get_slice(array, opts) do
-    start = Keyword.get(opts, :start, tuple_of_zeros(array.shape))
-    stop = Keyword.get(opts, :stop, array.shape)
-
-    with :ok <- validate_indices(start, stop, array.shape),
-         {:ok, chunk_indices} <- calculate_chunk_indices(array, start, stop),
-         {:ok, chunks} <- read_chunks(array, chunk_indices) do
-      assemble_slice(array, chunks, start, stop)
+    # Parse slice options - supports both numeric (:start, :stop) and named dimensions
+    with {:ok, {start, stop}} <- parse_slice_options(array, opts) do
+      with :ok <- validate_indices(start, stop, array.shape),
+           {:ok, chunk_indices} <- calculate_chunk_indices(array, start, stop),
+           {:ok, chunks} <- read_chunks(array, chunk_indices) do
+        assemble_slice(array, chunks, start, stop)
+      end
     end
   end
 
@@ -321,22 +435,14 @@ defmodule ExZarr.Array do
   def set_slice(array, data, opts) do
     # Validate that data is binary
     if is_binary(data) do
-      start = Keyword.get(opts, :start, tuple_of_zeros(array.shape))
-      stop = Keyword.get(opts, :stop)
-
-      # Calculate stop from data size if not provided (for 1D arrays)
-      stop =
-        if stop do
-          stop
-        else
-          calculate_stop_from_data(array, data, start)
+      # Parse slice options - supports both numeric and named dimensions
+      with {:ok, {start, stop}} <- parse_slice_options(array, opts) do
+        with :ok <- validate_indices(start, stop, array.shape),
+             :ok <- validate_write_data_size(data, start, stop, array.dtype),
+             {:ok, chunk_indices} <- calculate_chunk_indices(array, start, stop),
+             {:ok, chunks} <- split_into_chunks(array, data, start, stop) do
+          write_chunks(array, chunks, chunk_indices)
         end
-
-      with :ok <- validate_indices(start, stop, array.shape),
-           :ok <- validate_write_data_size(data, start, stop, array.dtype),
-           {:ok, chunk_indices} <- calculate_chunk_indices(array, start, stop),
-           {:ok, chunks} <- split_into_chunks(array, data, start, stop) do
-        write_chunks(array, chunks, chunk_indices)
       end
     else
       {:error, {:invalid_data, "data must be binary, got: #{inspect(data)}"}}
@@ -509,30 +615,39 @@ defmodule ExZarr.Array do
     {:ok, chunk_indices}
   end
 
-  defp calculate_stop_from_start_and_size(start, num_elements, shape) do
-    # For now, assume 1D writing (can be extended for multi-dimensional)
-    start_list = Tuple.to_list(start)
-    shape_list = Tuple.to_list(shape)
+  # defp calculate_stop_from_start_and_size(start, num_elements, shape) do
+  #   # For now, assume 1D writing (can be extended for multi-dimensional)
+  #   start_list = Tuple.to_list(start)
+  #   shape_list = Tuple.to_list(shape)
 
-    # Calculate how many elements fit in each dimension
-    {stop_list, _remaining} =
-      Enum.zip(start_list, shape_list)
-      |> Enum.reduce({[], num_elements}, fn {start_val, dim_size}, {acc, remaining} ->
-        available = dim_size - start_val
-        to_use = min(available, remaining)
-        {acc ++ [start_val + to_use], remaining - to_use}
-      end)
+  #   # Calculate how many elements fit in each dimension
+  #   {stop_list, _remaining} =
+  #     Enum.zip(start_list, shape_list)
+  #     |> Enum.reduce({[], num_elements}, fn {start_val, dim_size}, {acc, remaining} ->
+  #       available = dim_size - start_val
+  #       to_use = min(available, remaining)
+  #       {acc ++ [start_val + to_use], remaining - to_use}
+  #     end)
 
-    List.to_tuple(stop_list)
-  end
+  #   List.to_tuple(stop_list)
+  # end
 
-  defp calculate_stop_from_data(array, data, start) do
-    element_size = dtype_size(array.dtype)
-    num_elements = Kernel.div(byte_size(data), element_size)
-    calculate_stop_from_start_and_size(start, num_elements, array.shape)
-  end
+  # defp calculate_stop_from_data(array, data, start) do
+  #   element_size = dtype_size(array.dtype)
+  #   num_elements = Kernel.div(byte_size(data), element_size)
+  #   calculate_stop_from_start_and_size(start, num_elements, array.shape)
+  # end
 
   defp read_chunks(array, chunk_indices) do
+    # Check if sharding is enabled for v3 arrays
+    if array.version == 3 and sharding_enabled?(array) do
+      read_chunks_with_sharding(array, chunk_indices)
+    else
+      read_chunks_without_sharding(array, chunk_indices)
+    end
+  end
+
+  defp read_chunks_without_sharding(array, chunk_indices) do
     chunks =
       chunk_indices
       |> Enum.map(fn index ->
@@ -557,13 +672,145 @@ defmodule ExZarr.Array do
     end
   end
 
+  defp read_chunks_with_sharding(array, chunk_indices) do
+    # Get sharding codec configuration
+    sharding_codec = get_sharding_codec(array)
+
+    # Read each shard and extract requested chunks
+    chunks =
+      chunk_indices
+      |> Enum.map(fn chunk_idx ->
+        shard_idx = calculate_shard_index(chunk_idx, sharding_codec.chunk_shape)
+
+        case Storage.read_chunk(array.storage, shard_idx) do
+          {:ok, shard_data} ->
+            # Extract specific chunk from shard
+            alias ExZarr.Codecs.ShardingIndexed
+
+            case ShardingIndexed.decode_chunk(shard_data, chunk_idx, sharding_codec) do
+              {:ok, chunk_data} ->
+                # Apply inner codecs to decode chunk data
+                apply_inner_codecs_decode(chunk_data, sharding_codec.codecs, array)
+
+              {:error, {:chunk_not_found, _}} ->
+                # Chunk not in shard, return fill chunk
+                {:ok, create_fill_chunk(array)}
+
+              {:error, reason} ->
+                {:error, reason}
+            end
+
+          {:error, :not_found} ->
+            # Shard doesn't exist, return fill chunk
+            {:ok, create_fill_chunk(array)}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+      end)
+
+    # Check for errors
+    errors = Enum.filter(chunks, &match?({:error, _}, &1))
+
+    if Enum.empty?(errors) do
+      chunk_data = Enum.map(chunks, fn {:ok, data} -> data end)
+      {:ok, chunk_data}
+    else
+      {:error, :read_failed}
+    end
+  end
+
   defp write_chunks(array, chunks, indices) do
+    # Check if sharding is enabled for v3 arrays
+    if array.version == 3 and sharding_enabled?(array) do
+      write_chunks_with_sharding(array, chunks, indices)
+    else
+      write_chunks_without_sharding(array, chunks, indices)
+    end
+  end
+
+  defp write_chunks_without_sharding(array, chunks, indices) do
     results =
       Enum.zip(chunks, indices)
       |> Enum.map(fn {chunk_data, index} ->
         # Version-aware codec encoding
         with {:ok, compressed} <- apply_codec_pipeline_encode(array, chunk_data) do
           Storage.write_chunk(array.storage, index, compressed)
+        end
+      end)
+
+    if Enum.all?(results, &(&1 == :ok)) do
+      :ok
+    else
+      {:error, :write_failed}
+    end
+  end
+
+  defp write_chunks_with_sharding(array, chunks, indices) do
+    alias ExZarr.Codecs.ShardingIndexed
+
+    # Get sharding codec configuration
+    sharding_codec = get_sharding_codec(array)
+
+    # Group chunks by shard
+    chunks_by_shard =
+      Enum.zip(chunks, indices)
+      |> Enum.group_by(
+        fn {_chunk_data, chunk_idx} ->
+          calculate_shard_index(chunk_idx, sharding_codec.chunk_shape)
+        end,
+        fn {chunk_data, chunk_idx} -> {chunk_idx, chunk_data} end
+      )
+
+    # Process each shard
+    results =
+      chunks_by_shard
+      |> Enum.map(fn {shard_idx, chunk_updates} ->
+        # Read existing shard or create empty map
+        existing_chunks =
+          case Storage.read_chunk(array.storage, shard_idx) do
+            {:ok, shard_data} ->
+              case ShardingIndexed.decode(shard_data, sharding_codec) do
+                {:ok, chunks_map} -> chunks_map
+                {:error, _} -> %{}
+              end
+
+            {:error, :not_found} ->
+              %{}
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+
+        # Apply updates to existing chunks
+        updated_chunks =
+          if is_map(existing_chunks) do
+            Enum.reduce(chunk_updates, existing_chunks, fn {chunk_idx, chunk_data}, acc ->
+              # Encode chunk data with inner codecs
+              case apply_inner_codecs_encode(chunk_data, sharding_codec.codecs, array) do
+                {:ok, encoded_chunk} ->
+                  Map.put(acc, chunk_idx, encoded_chunk)
+
+                {:error, _reason} ->
+                  acc
+              end
+            end)
+          else
+            # Error reading existing chunks
+            existing_chunks
+          end
+
+        # Encode updated shard and write to storage
+        if is_map(updated_chunks) do
+          case ShardingIndexed.encode(updated_chunks, sharding_codec) do
+            {:ok, shard_data} ->
+              Storage.write_chunk(array.storage, shard_idx, shard_data)
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+        else
+          updated_chunks
         end
       end)
 
@@ -585,8 +832,7 @@ defmodule ExZarr.Array do
     chunk_indices
     |> Enum.reduce_while({:ok, []}, fn chunk_index, {:ok, acc_chunks} ->
       # Get the bounds of this chunk in array coordinates
-      {chunk_start, chunk_stop} =
-        ExZarr.Chunk.chunk_bounds(chunk_index, array.chunks, array.shape)
+      {chunk_start, chunk_stop} = get_chunk_bounds(array, chunk_index)
 
       # Calculate the overlap between the chunk and the write region
       overlap_start = tuple_max(chunk_start, start)
@@ -644,8 +890,7 @@ defmodule ExZarr.Array do
       Enum.zip(chunks, chunk_indices)
       |> Enum.reduce(output, fn {chunk_data, chunk_index}, acc ->
         # Get the bounds of this chunk
-        {chunk_start, chunk_stop} =
-          ExZarr.Chunk.chunk_bounds(chunk_index, array.chunks, array.shape)
+        {chunk_start, chunk_stop} = get_chunk_bounds(array, chunk_index)
 
         # Calculate overlap between chunk and requested slice
         overlap_start = tuple_max(chunk_start, start)
@@ -1053,6 +1298,79 @@ defmodule ExZarr.Array do
     for x <- range, rest_item <- rest_product do
       [x | rest_item]
     end
+  end
+
+  # Sharding helper functions
+
+  defp sharding_enabled?(array) do
+    case array.metadata do
+      %ExZarr.MetadataV3{codecs: codecs} when is_list(codecs) ->
+        Enum.any?(codecs, fn codec ->
+          (is_map(codec) and Map.get(codec, :name) == "sharding_indexed") or
+            (is_map(codec) and Map.get(codec, "name") == "sharding_indexed")
+        end)
+
+      _ ->
+        false
+    end
+  end
+
+  defp get_sharding_codec(array) do
+    case array.metadata do
+      %ExZarr.MetadataV3{codecs: codecs} when is_list(codecs) ->
+        sharding_spec =
+          Enum.find(codecs, fn codec ->
+            (is_map(codec) and Map.get(codec, :name) == "sharding_indexed") or
+              (is_map(codec) and Map.get(codec, "name") == "sharding_indexed")
+          end)
+
+        if sharding_spec do
+          config =
+            Map.get(sharding_spec, :configuration) || Map.get(sharding_spec, "configuration") ||
+              %{}
+
+          {:ok, codec} = ShardingIndexed.init(config)
+          codec
+        else
+          nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp calculate_shard_index(chunk_index, shard_chunk_shape) do
+    chunk_list = Tuple.to_list(chunk_index)
+    shard_shape_list = Tuple.to_list(shard_chunk_shape)
+
+    shard_indices =
+      Enum.zip(chunk_list, shard_shape_list)
+      |> Enum.map(fn {chunk_coord, shard_size} ->
+        div(chunk_coord, shard_size)
+      end)
+
+    List.to_tuple(shard_indices)
+  end
+
+  defp apply_inner_codecs_decode(chunk_data, inner_codecs, array) do
+    # Inner codecs are the codecs used for individual chunks within the shard
+    # These should be applied after extracting the chunk from the shard
+    alias ExZarr.Codecs.PipelineV3
+
+    {:ok, pipeline} = PipelineV3.parse_codecs(inner_codecs)
+    opts = [itemsize: ExZarr.DataType.itemsize(array.dtype), dtype: array.dtype]
+    PipelineV3.decode(chunk_data, pipeline, opts)
+  end
+
+  defp apply_inner_codecs_encode(chunk_data, inner_codecs, array) do
+    # Inner codecs are the codecs used for individual chunks within the shard
+    # These should be applied before adding the chunk to the shard
+    alias ExZarr.Codecs.PipelineV3
+
+    {:ok, pipeline} = PipelineV3.parse_codecs(inner_codecs)
+    opts = [itemsize: ExZarr.DataType.itemsize(array.dtype), dtype: array.dtype]
+    PipelineV3.encode(chunk_data, pipeline, opts)
   end
 
   # Index validation functions
@@ -1754,5 +2072,120 @@ defmodule ExZarr.Array do
 
   defp values_to_binary(values, :float64) do
     for value <- values, into: <<>>, do: <<value::float-little-64>>
+  end
+
+  ## Chunk Grid Helpers
+
+  @doc false
+  def get_chunk_shape(%__MODULE__{chunk_grid_module: nil, chunks: chunks}, _chunk_index) do
+    # No chunk grid, use regular chunks
+    chunks
+  end
+
+  def get_chunk_shape(
+        %__MODULE__{chunk_grid_module: module, chunk_grid_state: state},
+        chunk_index
+      )
+      when not is_nil(module) and not is_nil(state) do
+    # Use chunk grid to get shape
+    module.chunk_shape(chunk_index, state)
+  end
+
+  def get_chunk_shape(%__MODULE__{chunks: chunks}, _chunk_index) do
+    # Fallback to regular chunks
+    chunks
+  end
+
+  @doc """
+  Gets the chunk bounds for a given chunk index, considering chunk grids.
+
+  For regular arrays, behaves identically to ExZarr.Chunk.chunk_bounds/3.
+  For arrays with irregular chunk grids, uses the grid to determine the
+  actual chunk shape and calculates proper bounds by accumulating sizes.
+
+  ## Parameters
+
+    * `array` - Array struct
+    * `chunk_index` - Tuple identifying the chunk
+
+  ## Returns
+
+    * `{start_indices, end_indices}` - Tuple of start and end coordinates
+
+  ## Examples
+
+      # Regular array
+      {:ok, array} = ExZarr.create(shape: {1000, 1000}, chunks: {100, 100})
+      ExZarr.Array.get_chunk_bounds(array, {0, 0})
+      # => {{0, 0}, {100, 100}}
+
+      # Array with irregular grid
+      {:ok, array} = ExZarr.create(
+        shape: {100, 200},
+        chunk_grid: %{
+          "name" => "irregular",
+          "configuration" => %{
+            "chunk_sizes" => [[50, 50], [100, 100]]
+          }
+        }
+      )
+      ExZarr.Array.get_chunk_bounds(array, {0, 0})
+      # => {{0, 0}, {50, 100}}
+  """
+  @spec get_chunk_bounds(t(), tuple()) :: {tuple(), tuple()}
+  def get_chunk_bounds(
+        %__MODULE__{chunk_grid_module: Irregular, chunk_grid_state: state} = array,
+        chunk_index
+      )
+      when not is_nil(state) do
+    # For irregular grids, we need to calculate bounds by accumulating sizes
+    calculate_irregular_chunk_bounds(array, chunk_index, state)
+  end
+
+  def get_chunk_bounds(%__MODULE__{} = array, chunk_index) do
+    # Regular grids can use standard calculation
+    chunk_shape = get_chunk_shape(array, chunk_index)
+    ExZarr.Chunk.chunk_bounds(chunk_index, chunk_shape, array.shape)
+  end
+
+  @doc false
+  defp calculate_irregular_chunk_bounds(array, chunk_index, state) do
+    # Get chunk shape
+    chunk_shape = Irregular.chunk_shape(chunk_index, state)
+
+    # Calculate start by accumulating sizes of all previous chunks in each dimension
+    chunk_index_list = Tuple.to_list(chunk_index)
+
+    start_indices =
+      case state.chunk_sizes do
+        sizes when is_list(sizes) ->
+          # Calculate start position in each dimension
+          Enum.zip(chunk_index_list, sizes)
+          |> Enum.map(fn {idx, dim_sizes} ->
+            # Sum up sizes of all chunks before this index
+            dim_sizes
+            |> Enum.take(idx)
+            |> Enum.sum()
+          end)
+          |> List.to_tuple()
+
+        _ ->
+          # chunk_shapes map: need to search through all chunks to calculate offsets
+          # For now, fall back to regular calculation (not perfectly accurate)
+          Tuple.to_list(chunk_index)
+          |> Enum.zip(Tuple.to_list(chunk_shape))
+          |> Enum.map(fn {idx, size} -> idx * size end)
+          |> List.to_tuple()
+      end
+
+    # Calculate end indices
+    end_indices =
+      Tuple.to_list(start_indices)
+      |> Enum.zip(Tuple.to_list(chunk_shape))
+      |> Enum.zip(Tuple.to_list(array.shape))
+      |> Enum.map(fn {{start, size}, array_dim} -> min(start + size, array_dim) end)
+      |> List.to_tuple()
+
+    {start_indices, end_indices}
   end
 end

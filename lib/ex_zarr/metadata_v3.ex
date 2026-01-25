@@ -90,6 +90,128 @@ defmodule ExZarr.MetadataV3 do
     :dimension_names
   ]
 
+  defimpl Jason.Encoder do
+    def encode(metadata, opts) do
+      map =
+        %{
+          zarr_format: metadata.zarr_format,
+          node_type: metadata.node_type
+        }
+        |> add_array_fields(metadata)
+        |> add_common_fields(metadata)
+
+      Jason.Encode.map(map, opts)
+    end
+
+    defp add_array_fields(map, %{node_type: :array} = metadata) do
+      # Convert tuples to lists for JSON encoding
+      chunk_shape =
+        if metadata.chunk_grid && metadata.chunk_grid.configuration do
+          case metadata.chunk_grid.configuration.chunk_shape do
+            shape when is_tuple(shape) -> Tuple.to_list(shape)
+            shape -> shape
+          end
+        else
+          nil
+        end
+
+      chunk_grid =
+        if metadata.chunk_grid && chunk_shape do
+          %{
+            name: metadata.chunk_grid.name,
+            configuration: %{chunk_shape: chunk_shape}
+          }
+        else
+          metadata.chunk_grid
+        end
+
+      # Convert codec chunk_shape tuples to lists
+      codecs = convert_codec_shapes(metadata.codecs)
+
+      map
+      |> Map.put(:shape, maybe_tuple_to_list(metadata.shape))
+      |> Map.put(:data_type, metadata.data_type)
+      |> Map.put(:chunk_grid, chunk_grid)
+      |> Map.put(:chunk_key_encoding, metadata.chunk_key_encoding)
+      |> Map.put(:codecs, codecs)
+      |> Map.put(:fill_value, metadata.fill_value)
+    end
+
+    defp add_array_fields(map, _metadata), do: map
+
+    defp add_common_fields(map, metadata) do
+      map
+      |> Map.put(:attributes, metadata.attributes || %{})
+      |> maybe_put(:dimension_names, metadata.dimension_names)
+    end
+
+    defp maybe_put(map, _key, nil), do: map
+    defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+    defp maybe_tuple_to_list(value) when is_tuple(value), do: Tuple.to_list(value)
+    defp maybe_tuple_to_list(value), do: value
+
+    defp convert_codec_shapes(nil), do: nil
+    defp convert_codec_shapes([]), do: []
+
+    defp convert_codec_shapes(codecs) when is_list(codecs) do
+      Enum.map(codecs, &convert_codec_shape/1)
+    end
+
+    defp convert_codec_shape(%{name: "sharding_indexed", configuration: config} = codec)
+         when is_map(config) do
+      # Convert chunk_shape tuple to list in sharding configuration
+      # Handle both atom and string keys
+      chunk_shape =
+        case Map.get(config, :chunk_shape) || Map.get(config, "chunk_shape") do
+          shape when is_tuple(shape) -> Tuple.to_list(shape)
+          shape -> shape
+        end
+
+      # Build new config with converted values, preserving key format
+      updated_config =
+        config
+        |> update_config_key(:chunk_shape, "chunk_shape", chunk_shape)
+        |> update_config_key_with_converter(
+          :codecs,
+          "codecs",
+          &convert_codec_shapes/1
+        )
+        |> update_config_key_with_converter(
+          :index_codecs,
+          "index_codecs",
+          &convert_codec_shapes/1
+        )
+
+      %{codec | configuration: updated_config}
+    end
+
+    defp convert_codec_shape(%{name: _name, configuration: config} = codec) when is_map(config) do
+      # For other codecs, just ensure maps are properly formatted
+      codec
+    end
+
+    defp convert_codec_shape(codec), do: codec
+
+    defp update_config_key(config, atom_key, string_key, value) do
+      cond do
+        Map.has_key?(config, atom_key) -> Map.put(config, atom_key, value)
+        Map.has_key?(config, string_key) -> Map.put(config, string_key, value)
+        true -> config
+      end
+    end
+
+    defp update_config_key_with_converter(config, atom_key, string_key, converter) do
+      value = Map.get(config, atom_key) || Map.get(config, string_key)
+
+      if value do
+        update_config_key(config, atom_key, string_key, converter.(value))
+      else
+        config
+      end
+    end
+  end
+
   @doc """
   Validates v3 metadata structure.
 
@@ -162,8 +284,9 @@ defmodule ExZarr.MetadataV3 do
          :ok <- validate_required_field(metadata.chunk_key_encoding, :chunk_key_encoding),
          :ok <- validate_required_field(metadata.codecs, :codecs),
          :ok <- validate_shape(metadata.shape),
-         :ok <- validate_data_type(metadata.data_type) do
-      validate_chunk_grid(metadata.chunk_grid)
+         :ok <- validate_data_type(metadata.data_type),
+         :ok <- validate_chunk_grid(metadata.chunk_grid) do
+      validate_dimension_names(metadata.dimension_names, metadata.shape)
     end
   end
 
@@ -233,6 +356,77 @@ defmodule ExZarr.MetadataV3 do
 
   defp validate_chunk_grid(other),
     do: {:error, {:invalid_chunk_grid, "Expected map with 'name' field, got: #{inspect(other)}"}}
+
+  @doc false
+  @spec validate_dimension_names([String.t() | nil] | nil, tuple()) ::
+          :ok | {:error, {:invalid_dimension_names, String.t()}}
+  defp validate_dimension_names(nil, _shape), do: :ok
+  defp validate_dimension_names([], _shape), do: :ok
+
+  defp validate_dimension_names(names, shape) when is_list(names) do
+    ndim = tuple_size(shape)
+
+    with :ok <- validate_dimension_names_count(names, ndim),
+         :ok <- validate_dimension_names_format(names) do
+      validate_dimension_names_unique(names)
+    end
+  end
+
+  defp validate_dimension_names(other, _shape),
+    do:
+      {:error,
+       {:invalid_dimension_names, "Expected list of strings or nil, got: #{inspect(other)}"}}
+
+  defp validate_dimension_names_count(names, ndim) do
+    if length(names) == ndim do
+      :ok
+    else
+      {:error,
+       {:invalid_dimension_names,
+        "Dimension names count (#{length(names)}) must match shape dimensions (#{ndim})"}}
+    end
+  end
+
+  defp validate_dimension_names_format(names) do
+    invalid =
+      Enum.find(names, fn name ->
+        case name do
+          nil -> false
+          name when is_binary(name) -> not valid_dimension_name?(name)
+          _ -> true
+        end
+      end)
+
+    case invalid do
+      nil ->
+        :ok
+
+      name ->
+        {:error,
+         {:invalid_dimension_names,
+          "Invalid dimension name: #{inspect(name)}. Must be string with alphanumeric, underscore, or hyphen characters"}}
+    end
+  end
+
+  defp validate_dimension_names_unique(names) do
+    # Filter out nils before checking uniqueness
+    non_nil_names = Enum.filter(names, &(&1 != nil))
+
+    if length(non_nil_names) == length(Enum.uniq(non_nil_names)) do
+      :ok
+    else
+      duplicates = non_nil_names -- Enum.uniq(non_nil_names)
+
+      {:error,
+       {:invalid_dimension_names,
+        "Duplicate dimension names found: #{inspect(Enum.uniq(duplicates))}"}}
+    end
+  end
+
+  defp valid_dimension_name?(name) when is_binary(name) do
+    # Valid dimension names: alphanumeric, underscore, hyphen, not empty
+    String.match?(name, ~r/^[a-zA-Z0-9_-]+$/)
+  end
 
   @doc false
   @spec validate_codecs(t()) :: :ok | {:error, term()}
@@ -458,7 +652,7 @@ defmodule ExZarr.MetadataV3 do
   @spec create(map()) :: {:ok, t()}
   def create(config) do
     # Handle both v3 codecs and v2 filters+compressor
-    codecs =
+    base_codecs =
       case Map.get(config, :codecs) do
         nil ->
           # Convert v2 style to v3 codecs
@@ -469,6 +663,35 @@ defmodule ExZarr.MetadataV3 do
         codecs ->
           # Use provided v3 codecs
           codecs
+      end
+
+    # Wrap codecs in sharding if shard_shape is provided
+    codecs =
+      case Map.get(config, :shard_shape) do
+        nil ->
+          # No sharding
+          base_codecs
+
+        shard_shape ->
+          # Wrap base codecs in sharding codec
+          # Convert shard_shape to list for JSON encoding
+          chunk_shape_list =
+            if is_tuple(shard_shape), do: Tuple.to_list(shard_shape), else: shard_shape
+
+          index_codecs = Map.get(config, :index_codecs, [%{name: "bytes"}, %{name: "crc32c"}])
+          index_location = Map.get(config, :index_location, "end")
+
+          [
+            %{
+              name: "sharding_indexed",
+              configuration: %{
+                chunk_shape: chunk_shape_list,
+                codecs: base_codecs,
+                index_codecs: index_codecs,
+                index_location: index_location
+              }
+            }
+          ]
       end
 
     metadata = %__MODULE__{

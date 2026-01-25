@@ -1,4 +1,6 @@
 defmodule ExZarr.Codecs.PipelineV3 do
+  import Bitwise
+
   @moduledoc """
   Zarr v3 codec pipeline implementation.
 
@@ -79,7 +81,7 @@ defmodule ExZarr.Codecs.PipelineV3 do
     "packbits"
   ]
   @array_to_bytes_codecs ["bytes"]
-  @bytes_to_bytes_codecs ["gzip", "zstd", "blosc", "lz4", "bz2", "crc32c"]
+  @bytes_to_bytes_codecs ["gzip", "zstd", "blosc", "lz4", "bz2", "crc32c", "sharding_indexed"]
 
   @doc """
   Parses and validates a list of codec specifications.
@@ -360,6 +362,43 @@ defmodule ExZarr.Codecs.PipelineV3 do
     encode_delta(data, dtype)
   end
 
+  defp apply_codec_encode(%{name: "transpose"} = codec, data, opts) do
+    config = Map.get(codec, :configuration, %{})
+    order = Map.get(config, :order, Map.get(config, "order"))
+    shape = Keyword.get(opts, :shape)
+    dtype = Keyword.get(opts, :dtype, :float64)
+
+    if is_nil(order) or is_nil(shape) do
+      {:error, {:missing_transpose_config, "order and shape required"}}
+    else
+      transpose_array(data, shape, order, dtype)
+    end
+  end
+
+  defp apply_codec_encode(%{name: "quantize"} = codec, data, opts) do
+    config = Map.get(codec, :configuration, %{})
+    dtype_str = Map.get(config, :dtype, Map.get(config, "dtype"))
+    scale = Map.get(config, :scale, Map.get(config, "scale", 1.0))
+    offset = Map.get(config, :offset, Map.get(config, "offset", 0.0))
+
+    source_dtype = Keyword.get(opts, :dtype, :float64)
+
+    target_dtype =
+      if is_binary(dtype_str),
+        do: ExZarr.DataType.from_v3(dtype_str),
+        else: :int16
+
+    quantize_encode(data, source_dtype, target_dtype, scale, offset)
+  end
+
+  defp apply_codec_encode(%{name: "bitround"} = codec, data, opts) do
+    config = Map.get(codec, :configuration, %{})
+    keepbits = Map.get(config, :keepbits, Map.get(config, "keepbits", 10))
+    dtype = Keyword.get(opts, :dtype, :float64)
+
+    bitround_encode(data, dtype, keepbits)
+  end
+
   defp apply_codec_encode(%{name: name}, _data, _opts) do
     {:error, {:unsupported_array_to_array_codec, name}}
   end
@@ -391,6 +430,49 @@ defmodule ExZarr.Codecs.PipelineV3 do
 
     # Delta decoding: reconstruct from differences
     decode_delta(data, dtype)
+  end
+
+  defp apply_codec_decode(%{name: "transpose"} = codec, data, opts) do
+    config = Map.get(codec, :configuration, %{})
+    order = Map.get(config, :order, Map.get(config, "order"))
+    shape = Keyword.get(opts, :shape)
+    dtype = Keyword.get(opts, :dtype, :float64)
+
+    if is_nil(order) or is_nil(shape) do
+      {:error, {:missing_transpose_config, "order and shape required"}}
+    else
+      # For decoding, we need to invert the transpose operation
+      inverse_order = invert_permutation(order)
+      # Apply transpose with transposed shape
+      transposed_shape = permute_shape(shape, order)
+      transpose_array(data, transposed_shape, inverse_order, dtype)
+    end
+  end
+
+  defp apply_codec_decode(%{name: "quantize"} = codec, data, opts) do
+    config = Map.get(codec, :configuration, %{})
+    dtype_str = Map.get(config, :dtype, Map.get(config, "dtype"))
+    scale = Map.get(config, :scale, Map.get(config, "scale", 1.0))
+    offset = Map.get(config, :offset, Map.get(config, "offset", 0.0))
+
+    target_dtype = Keyword.get(opts, :dtype, :float64)
+
+    source_dtype =
+      if is_binary(dtype_str),
+        do: ExZarr.DataType.from_v3(dtype_str),
+        else: :int16
+
+    quantize_decode(data, source_dtype, target_dtype, scale, offset)
+  end
+
+  defp apply_codec_decode(%{name: "bitround"} = codec, data, opts) do
+    config = Map.get(codec, :configuration, %{})
+    keepbits = Map.get(config, :keepbits, Map.get(config, "keepbits", 10))
+    dtype = Keyword.get(opts, :dtype, :float64)
+
+    # Bitround is lossy - decoding is a no-op since precision is already lost
+    # The data is already rounded, so just pass through
+    bitround_decode(data, dtype, keepbits)
   end
 
   defp apply_codec_decode(%{name: name}, _data, _opts) do
@@ -620,6 +702,278 @@ defmodule ExZarr.Codecs.PipelineV3 do
     # Generic conversion for other filters
     %{name: Atom.to_string(filter_id), configuration: %{}}
   end
+
+  # Transpose codec implementation
+  @doc false
+  defp transpose_array(data, shape, order, dtype) do
+    shape_list = if is_tuple(shape), do: Tuple.to_list(shape), else: shape
+    ndim = length(shape_list)
+
+    # Validate order
+    if length(order) != ndim or Enum.sort(order) != Enum.to_list(0..(ndim - 1)) do
+      {:error, {:invalid_transpose_order, "order must be a permutation of 0..#{ndim - 1}"}}
+    else
+      itemsize = ExZarr.DataType.itemsize(dtype)
+      num_elements = div(byte_size(data), itemsize)
+
+      # For small dimensions, do the transpose
+      if ndim == 1 do
+        # 1D: no-op
+        {:ok, data}
+      else
+        # General N-dimensional transpose
+        transpose_nd(data, shape_list, order, itemsize, num_elements)
+      end
+    end
+  end
+
+  @doc false
+  defp transpose_nd(data, shape, order, itemsize, num_elements) do
+    # Compute strides for original and transposed array
+    original_strides = compute_strides(shape)
+    new_shape = permute_shape(shape, order)
+    new_strides = compute_strides(new_shape)
+
+    # Reorder elements: for each position in OUTPUT array, find corresponding position in INPUT
+    transposed =
+      for output_idx <- 0..(num_elements - 1), into: <<>> do
+        # Convert output flat index to multi-index in transposed array
+        output_multi_idx = flat_to_multi_index(output_idx, new_strides)
+        # Reverse permute to get input multi-index
+        input_multi_idx = reverse_permute_index(output_multi_idx, order)
+        # Convert to flat index in original array
+        input_flat_idx = multi_to_flat_index(input_multi_idx, original_strides)
+        # Extract element from input position
+        offset = input_flat_idx * itemsize
+        <<_::binary-size(offset), element::binary-size(itemsize), _::binary>> = data
+        element
+      end
+
+    {:ok, transposed}
+  end
+
+  @doc false
+  defp compute_strides(shape) do
+    # Row-major (C-order) strides
+    shape
+    |> Enum.reverse()
+    |> Enum.scan(1, &*/2)
+    |> Enum.reverse()
+    |> tl()
+    |> Kernel.++([1])
+  end
+
+  @doc false
+  defp flat_to_multi_index(flat_idx, strides) do
+    {multi_idx, _} =
+      Enum.reduce(strides, {[], flat_idx}, fn stride, {acc, remainder} ->
+        idx = div(remainder, stride)
+        {acc ++ [idx], rem(remainder, stride)}
+      end)
+
+    multi_idx
+  end
+
+  @doc false
+  defp multi_to_flat_index(multi_idx, strides) do
+    Enum.zip(multi_idx, strides)
+    |> Enum.reduce(0, fn {idx, stride}, acc -> acc + idx * stride end)
+  end
+
+  @doc false
+  defp reverse_permute_index(output_multi_idx, order) do
+    # If output dimension j came from input dimension order[j],
+    # then input dimension i goes to output dimension (position of i in order)
+    # So output_multi_idx[j] corresponds to input dimension order[j]
+    order
+    |> Enum.with_index()
+    |> Enum.sort_by(fn {source_dim, _output_pos} -> source_dim end)
+    |> Enum.map(fn {_source_dim, output_pos} -> Enum.at(output_multi_idx, output_pos) end)
+  end
+
+  @doc false
+  defp permute_shape(shape, order) when is_tuple(shape) do
+    permute_shape(Tuple.to_list(shape), order)
+  end
+
+  defp permute_shape(shape, order) when is_list(shape) do
+    Enum.map(order, fn i -> Enum.at(shape, i) end)
+  end
+
+  @doc false
+  defp invert_permutation(order) do
+    # Create inverse: if order[i] = j, then inverse[j] = i
+    order
+    |> Enum.with_index()
+    |> Enum.sort_by(fn {val, _idx} -> val end)
+    |> Enum.map(fn {_val, idx} -> idx end)
+  end
+
+  # Quantize codec implementation
+  @doc false
+  defp quantize_encode(data, source_dtype, target_dtype, scale, offset) do
+    if byte_size(data) == 0 do
+      {:ok, <<>>}
+    else
+      source_itemsize = ExZarr.DataType.itemsize(source_dtype)
+      target_itemsize = ExZarr.DataType.itemsize(target_dtype)
+      num_elements = div(byte_size(data), source_itemsize)
+
+      # Parse floats, quantize, pack as integers
+      quantized =
+        for i <- 0..(num_elements - 1), into: <<>> do
+          offset_bytes = i * source_itemsize
+
+          <<_::binary-size(offset_bytes), element::binary-size(source_itemsize), _::binary>> =
+            data
+
+          float_val = parse_float(element, source_dtype)
+          # Quantize: round((value - offset) / scale)
+          quantized_val = round((float_val - offset) / scale)
+          # Clamp to target type range
+          clamped_val = clamp_to_int_range(quantized_val, target_dtype)
+          pack_int(clamped_val, target_dtype, target_itemsize)
+        end
+
+      {:ok, quantized}
+    end
+  end
+
+  @doc false
+  defp quantize_decode(data, source_dtype, target_dtype, scale, offset) do
+    if byte_size(data) == 0 do
+      {:ok, <<>>}
+    else
+      source_itemsize = ExZarr.DataType.itemsize(source_dtype)
+      target_itemsize = ExZarr.DataType.itemsize(target_dtype)
+      num_elements = div(byte_size(data), source_itemsize)
+
+      # Parse integers, dequantize, pack as floats
+      dequantized =
+        for i <- 0..(num_elements - 1), into: <<>> do
+          offset_bytes = i * source_itemsize
+
+          <<_::binary-size(offset_bytes), element::binary-size(source_itemsize), _::binary>> =
+            data
+
+          int_val = parse_int(element, source_dtype)
+          # Dequantize: value = quantized * scale + offset
+          float_val = int_val * scale + offset
+          pack_float(float_val, target_dtype, target_itemsize)
+        end
+
+      {:ok, dequantized}
+    end
+  end
+
+  @doc false
+  defp parse_float(<<value::float-little-32>>, :float32), do: value
+  defp parse_float(<<value::float-little-64>>, :float64), do: value
+  defp parse_float(_, _), do: 0.0
+
+  @doc false
+  defp parse_int(<<value::signed-little-16>>, :int16), do: value
+  defp parse_int(<<value::signed-little-32>>, :int32), do: value
+  defp parse_int(<<value::signed-little-64>>, :int64), do: value
+  defp parse_int(<<value::unsigned-little-8>>, :uint8), do: value
+  defp parse_int(<<value::unsigned-little-16>>, :uint16), do: value
+  defp parse_int(<<value::unsigned-little-32>>, :uint32), do: value
+  defp parse_int(_, _), do: 0
+
+  @doc false
+  defp pack_int(value, :int16, _), do: <<value::signed-little-16>>
+  defp pack_int(value, :int32, _), do: <<value::signed-little-32>>
+  defp pack_int(value, :int64, _), do: <<value::signed-little-64>>
+  defp pack_int(value, :uint8, _), do: <<value::unsigned-little-8>>
+  defp pack_int(value, :uint16, _), do: <<value::unsigned-little-16>>
+  defp pack_int(value, :uint32, _), do: <<value::unsigned-little-32>>
+
+  @doc false
+  defp pack_float(value, :float32, _), do: <<value::float-little-32>>
+  defp pack_float(value, :float64, _), do: <<value::float-little-64>>
+
+  @doc false
+  defp clamp_to_int_range(value, :int16),
+    do: max(-32_768, min(32_767, value))
+
+  defp clamp_to_int_range(value, :int32),
+    do: max(-2_147_483_648, min(2_147_483_647, value))
+
+  defp clamp_to_int_range(value, :int64),
+    do: value
+
+  defp clamp_to_int_range(value, :uint8),
+    do: max(0, min(255, value))
+
+  defp clamp_to_int_range(value, :uint16),
+    do: max(0, min(65_535, value))
+
+  defp clamp_to_int_range(value, :uint32),
+    do: max(0, min(4_294_967_295, value))
+
+  # Bitround codec implementation
+  @doc false
+  defp bitround_encode(data, dtype, keepbits) do
+    if byte_size(data) == 0 do
+      {:ok, <<>>}
+    else
+      itemsize = ExZarr.DataType.itemsize(dtype)
+      num_elements = div(byte_size(data), itemsize)
+
+      rounded =
+        for i <- 0..(num_elements - 1), into: <<>> do
+          offset_bytes = i * itemsize
+          <<_::binary-size(offset_bytes), element::binary-size(itemsize), _::binary>> = data
+          round_mantissa_bits(element, dtype, keepbits)
+        end
+
+      {:ok, rounded}
+    end
+  end
+
+  @doc false
+  defp bitround_decode(data, _dtype, _keepbits) do
+    # Bitround is lossy - decoding is a no-op
+    {:ok, data}
+  end
+
+  @doc false
+  defp round_mantissa_bits(<<_::binary>> = element, :float32, keepbits) do
+    # Float32: 1 sign bit, 8 exponent bits, 23 mantissa bits
+    # Read as 32-bit integer to manipulate bits, then convert back to float
+    <<int_bits::unsigned-little-32>> = element
+
+    # Round by zeroing lower (23 - keepbits) mantissa bits
+    if keepbits >= 23 do
+      element
+    else
+      mask_bits = 23 - keepbits
+      # Create mask that zeros out lower mantissa bits
+      # The mantissa is the lower 23 bits of the float
+      mask = bnot((1 <<< mask_bits) - 1) &&& 0xFFFFFFFF
+      rounded_bits = int_bits &&& mask
+      <<rounded_bits::unsigned-little-32>>
+    end
+  end
+
+  defp round_mantissa_bits(<<_::binary>> = element, :float64, keepbits) do
+    # Float64: 1 sign bit, 11 exponent bits, 52 mantissa bits
+    # Read as 64-bit integer to manipulate bits, then convert back to float
+    <<int_bits::unsigned-little-64>> = element
+
+    # Round by zeroing lower (52 - keepbits) mantissa bits
+    if keepbits >= 52 do
+      element
+    else
+      mask_bits = 52 - keepbits
+      # Create mask that zeros out lower mantissa bits
+      mask = bnot((1 <<< mask_bits) - 1) &&& 0xFFFFFFFFFFFFFFFF
+      rounded_bits = int_bits &&& mask
+      <<rounded_bits::unsigned-little-64>>
+    end
+  end
+
+  defp round_mantissa_bits(element, _dtype, _keepbits), do: element
 
   # Gzip compression/decompression helpers
   # Use actual gzip format (RFC 1952) not zlib format (RFC 1950)
