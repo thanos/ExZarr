@@ -603,6 +603,242 @@ defmodule ExZarr.MetadataV3 do
   end
 
   @doc """
+  Converts metadata to JSON format.
+
+  Encodes the MetadataV3 struct as JSON, converting tuples to lists and
+  ensuring proper formatting for Zarr v3 specification compliance.
+
+  ## Parameters
+
+    * `metadata` - MetadataV3 struct to encode
+
+  ## Returns
+
+    * `{:ok, json_string}` - JSON encoded metadata
+    * `{:error, reason}` - If encoding fails
+
+  ## Examples
+
+      iex> metadata = %ExZarr.MetadataV3{
+      ...>   zarr_format: 3,
+      ...>   node_type: :array,
+      ...>   shape: {100, 200},
+      ...>   data_type: "float64",
+      ...>   chunk_grid: %{name: "regular", configuration: %{chunk_shape: {10, 20}}},
+      ...>   chunk_key_encoding: %{name: "default"},
+      ...>   codecs: [%{name: "bytes"}],
+      ...>   fill_value: 0.0,
+      ...>   attributes: %{}
+      ...> }
+      iex> {:ok, json} = ExZarr.MetadataV3.to_json(metadata)
+      iex> is_binary(json)
+      true
+  """
+  @spec to_json(t()) :: {:ok, String.t()} | {:error, term()}
+  def to_json(%__MODULE__{} = metadata) do
+    case Jason.encode(metadata) do
+      {:ok, json} -> {:ok, json}
+      {:error, reason} -> {:error, {:json_encode_error, reason}}
+    end
+  end
+
+  @doc """
+  Parses JSON into MetadataV3 struct.
+
+  Decodes JSON (string or map) into a MetadataV3 struct, converting:
+  - Lists to tuples for shape and chunk_shape
+  - String node_type to atoms
+  - Nested codec configurations
+  - Dimension names
+
+  ## Parameters
+
+    * `json` - JSON string or map to parse
+
+  ## Returns
+
+    * `{:ok, metadata}` - Parsed MetadataV3 struct
+    * `{:error, reason}` - If parsing fails
+
+  ## Examples
+
+      iex> json = ~S({"zarr_format":3,"node_type":"array","shape":[100],"data_type":"float64","chunk_grid":{"name":"regular","configuration":{"chunk_shape":[10]}},"chunk_key_encoding":{"name":"default"},"codecs":[{"name":"bytes"}],"fill_value":0.0,"attributes":{}})
+      iex> {:ok, metadata} = ExZarr.MetadataV3.from_json(json)
+      iex> metadata.zarr_format
+      3
+  """
+  @spec from_json(String.t() | map()) :: {:ok, t()} | {:error, term()}
+  def from_json(json) when is_binary(json) do
+    case Jason.decode(json) do
+      {:ok, map} -> from_json(map)
+      {:error, reason} -> {:error, {:json_decode_error, reason}}
+    end
+  end
+
+  def from_json(map) when is_map(map) do
+    metadata = parse_metadata_map(map)
+    {:ok, metadata}
+  rescue
+    e -> {:error, {:parse_error, Exception.message(e)}}
+  end
+
+  def from_json(_), do: {:error, :invalid_json_input}
+
+  @doc false
+  defp parse_metadata_map(map) do
+    %__MODULE__{
+      zarr_format: Map.fetch!(map, "zarr_format"),
+      node_type: parse_node_type(Map.fetch!(map, "node_type")),
+      shape: parse_shape(Map.get(map, "shape")),
+      data_type: Map.get(map, "data_type"),
+      chunk_grid: parse_chunk_grid(Map.get(map, "chunk_grid")),
+      chunk_key_encoding: Map.get(map, "chunk_key_encoding"),
+      codecs: parse_codecs(Map.get(map, "codecs")),
+      fill_value: Map.get(map, "fill_value"),
+      attributes: Map.get(map, "attributes", %{}),
+      dimension_names: Map.get(map, "dimension_names")
+    }
+  end
+
+  @doc false
+  defp parse_node_type("array"), do: :array
+  defp parse_node_type("group"), do: :group
+  defp parse_node_type(:array), do: :array
+  defp parse_node_type(:group), do: :group
+  defp parse_node_type(other), do: raise("Invalid node_type: #{inspect(other)}")
+
+  @doc false
+  defp parse_shape(nil), do: nil
+  defp parse_shape(shape) when is_list(shape), do: List.to_tuple(shape)
+  defp parse_shape(shape) when is_tuple(shape), do: shape
+
+  @doc false
+  defp parse_chunk_grid(nil), do: nil
+
+  defp parse_chunk_grid(%{"name" => name, "configuration" => config}) do
+    %{
+      name: name,
+      configuration: parse_chunk_grid_config(name, config)
+    }
+  end
+
+  defp parse_chunk_grid(%{name: name, configuration: config}) do
+    %{
+      name: name,
+      configuration: parse_chunk_grid_config(name, config)
+    }
+  end
+
+  defp parse_chunk_grid(%{"name" => _name} = grid) do
+    grid
+  end
+
+  defp parse_chunk_grid(grid), do: grid
+
+  @doc false
+  defp parse_chunk_grid_config("regular", config) when is_map(config) do
+    chunk_shape =
+      case Map.get(config, "chunk_shape") || Map.get(config, :chunk_shape) do
+        shape when is_list(shape) -> List.to_tuple(shape)
+        shape when is_tuple(shape) -> shape
+        nil -> nil
+      end
+
+    Map.put(config, :chunk_shape, chunk_shape)
+  end
+
+  defp parse_chunk_grid_config("irregular", config) when is_map(config) do
+    # Irregular grids can have chunk_sizes or chunk_shapes
+    config
+    |> parse_chunk_sizes()
+    |> parse_chunk_shapes_map()
+  end
+
+  defp parse_chunk_grid_config(_name, config), do: config
+
+  @doc false
+  defp parse_chunk_sizes(%{"chunk_sizes" => sizes} = config) when is_list(sizes) do
+    # chunk_sizes is a list of lists, no conversion needed
+    config
+  end
+
+  defp parse_chunk_sizes(%{chunk_sizes: sizes} = config) when is_list(sizes) do
+    config
+  end
+
+  defp parse_chunk_sizes(config), do: config
+
+  @doc false
+  defp parse_chunk_shapes_map(%{"chunk_shapes" => shapes} = config) when is_map(shapes) do
+    # chunk_shapes is a map, no conversion needed
+    config
+  end
+
+  defp parse_chunk_shapes_map(%{chunk_shapes: shapes} = config) when is_map(shapes) do
+    config
+  end
+
+  defp parse_chunk_shapes_map(config), do: config
+
+  @doc false
+  defp parse_codecs(nil), do: nil
+  defp parse_codecs(codecs) when is_list(codecs), do: Enum.map(codecs, &parse_codec/1)
+
+  @doc false
+  defp parse_codec(%{"name" => name} = codec) do
+    config = Map.get(codec, "configuration", %{})
+    parsed_config = parse_codec_configuration(name, config)
+
+    %{name: name, configuration: parsed_config}
+  end
+
+  defp parse_codec(%{name: name} = codec) do
+    config = Map.get(codec, :configuration, %{})
+    parsed_config = parse_codec_configuration(name, config)
+
+    %{name: name, configuration: parsed_config}
+  end
+
+  @doc false
+  defp parse_codec_configuration("sharding_indexed", config) when is_map(config) do
+    # Parse chunk_shape
+    chunk_shape =
+      case Map.get(config, "chunk_shape") || Map.get(config, :chunk_shape) do
+        shape when is_list(shape) -> List.to_tuple(shape)
+        shape when is_tuple(shape) -> shape
+        nil -> nil
+      end
+
+    # Parse nested codecs
+    codecs =
+      case Map.get(config, "codecs") || Map.get(config, :codecs) do
+        nested when is_list(nested) -> parse_codecs(nested)
+        nil -> nil
+      end
+
+    # Parse index codecs
+    index_codecs =
+      case Map.get(config, "index_codecs") || Map.get(config, :index_codecs) do
+        nested when is_list(nested) -> parse_codecs(nested)
+        nil -> nil
+      end
+
+    # Parse index location
+    index_location = Map.get(config, "index_location") || Map.get(config, :index_location)
+
+    %{
+      chunk_shape: chunk_shape,
+      codecs: codecs,
+      index_codecs: index_codecs,
+      index_location: index_location
+    }
+    |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+    |> Enum.into(%{})
+  end
+
+  defp parse_codec_configuration(_name, config), do: config
+
+  @doc """
   Creates v3 metadata from array configuration.
 
   Converts v2-style configuration options into v3 metadata format with:
