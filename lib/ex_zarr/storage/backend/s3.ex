@@ -11,11 +11,18 @@ defmodule ExZarr.Storage.Backend.S3 do
   - `:bucket` - S3 bucket name (required)
   - `:prefix` - Key prefix/path within bucket (optional, default: "")
   - `:region` - AWS region (optional, default: "us-east-1")
+  - `:endpoint_url` - Custom endpoint URL for S3-compatible services (optional)
 
   AWS credentials are automatically loaded from standard AWS credential sources:
   - Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
   - Shared credentials file (~/.aws/credentials)
   - IAM role (when running on EC2/ECS)
+
+  For testing with localstack or minio, set the `AWS_ENDPOINT_URL` environment variable:
+  ```bash
+  export AWS_ENDPOINT_URL=http://localhost:4566  # localstack
+  export AWS_ENDPOINT_URL=http://localhost:9000  # minio
+  ```
 
   ## Dependencies
 
@@ -82,12 +89,13 @@ defmodule ExZarr.Storage.Backend.S3 do
     with {:ok, bucket} <- fetch_required(config, :bucket) do
       prefix = Keyword.get(config, :prefix, "")
       region = Keyword.get(config, :region, "us-east-1")
+      endpoint_url = Keyword.get(config, :endpoint_url) || System.get_env("AWS_ENDPOINT_URL")
 
       state = %{
         bucket: bucket,
         prefix: prefix,
         region: region,
-        ex_aws_config: build_ex_aws_config(region)
+        ex_aws_config: build_ex_aws_config(region, endpoint_url)
       }
 
       {:ok, state}
@@ -199,7 +207,8 @@ defmodule ExZarr.Storage.Backend.S3 do
     case fetch_required(config, :bucket) do
       {:ok, bucket} ->
         region = Keyword.get(config, :region, "us-east-1")
-        ex_aws_config = build_ex_aws_config(region)
+        endpoint_url = Keyword.get(config, :endpoint_url) || System.get_env("AWS_ENDPOINT_URL")
+        ex_aws_config = build_ex_aws_config(region, endpoint_url)
 
         case ex_aws_s3().head_bucket(bucket) |> ex_aws().request(ex_aws_config) do
           {:ok, _} -> true
@@ -229,8 +238,45 @@ defmodule ExZarr.Storage.Backend.S3 do
     end
   end
 
-  defp build_ex_aws_config(region) do
+  defp build_ex_aws_config(region, nil) do
+    # Use default AWS configuration
     [region: region]
+  end
+
+  defp build_ex_aws_config(region, endpoint_url) when is_binary(endpoint_url) do
+    # Parse endpoint URL for localstack/minio support
+    # ExAws expects: scheme, host, port instead of endpoint_url
+    uri = URI.parse(endpoint_url)
+
+    # Start with region and credentials (from env or default)
+    config = [
+      region: region,
+      access_key_id: System.get_env("AWS_ACCESS_KEY_ID") || "test",
+      secret_access_key: System.get_env("AWS_SECRET_ACCESS_KEY") || "test"
+    ]
+
+    config =
+      if uri.scheme do
+        Keyword.put(config, :scheme, "#{uri.scheme}://")
+      else
+        config
+      end
+
+    config =
+      if uri.host do
+        Keyword.put(config, :host, uri.host)
+      else
+        config
+      end
+
+    config =
+      if uri.port do
+        Keyword.put(config, :port, uri.port)
+      else
+        config
+      end
+
+    config
   end
 
   defp build_chunk_key("", chunk_index) do
