@@ -486,13 +486,9 @@ defmodule ExZarr.Storage do
   # Encode v3 codec specifications to JSON format
   defp encode_codecs_v3(codecs) when is_list(codecs) do
     Enum.map(codecs, fn codec ->
-      case Map.get(codec, :configuration, %{}) do
-        config when map_size(config) == 0 ->
-          %{name: codec.name}
-
-        config ->
-          %{name: codec.name, configuration: config}
-      end
+      # zarr-python 3.x requires 'configuration' key to always be present
+      config = Map.get(codec, :configuration, %{})
+      %{name: codec.name, configuration: config}
     end)
   end
 

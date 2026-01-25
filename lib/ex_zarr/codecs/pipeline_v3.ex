@@ -488,7 +488,8 @@ defmodule ExZarr.Codecs.PipelineV3 do
     case name do
       "gzip" ->
         level = Map.get(config, :level, Map.get(config, "level", 5))
-        Codecs.compress(data, :zlib, level: level)
+        # Use actual gzip format (not zlib/deflate)
+        gzip_compress(data, level)
 
       "zstd" ->
         level = Map.get(config, :level, Map.get(config, "level", 5))
@@ -514,13 +515,27 @@ defmodule ExZarr.Codecs.PipelineV3 do
   @doc false
   defp apply_compression_decode(%{name: name}, data, _opts) do
     case name do
-      "gzip" -> Codecs.decompress(data, :zlib)
-      "zstd" -> Codecs.decompress(data, :zstd)
-      "blosc" -> Codecs.decompress(data, :blosc)
-      "lz4" -> Codecs.decompress(data, :lz4)
-      "bz2" -> Codecs.decompress(data, :bzip2)
-      "crc32c" -> Codecs.decompress(data, :crc32c)
-      _ -> {:error, {:unsupported_compression_codec, name}}
+      "gzip" ->
+        # Use actual gzip format (not zlib/deflate)
+        gzip_decompress(data)
+
+      "zstd" ->
+        Codecs.decompress(data, :zstd)
+
+      "blosc" ->
+        Codecs.decompress(data, :blosc)
+
+      "lz4" ->
+        Codecs.decompress(data, :lz4)
+
+      "bz2" ->
+        Codecs.decompress(data, :bzip2)
+
+      "crc32c" ->
+        Codecs.decompress(data, :crc32c)
+
+      _ ->
+        {:error, {:unsupported_compression_codec, name}}
     end
   end
 
@@ -604,5 +619,45 @@ defmodule ExZarr.Codecs.PipelineV3 do
   defp filter_to_v3_codec(filter_id, _opts) do
     # Generic conversion for other filters
     %{name: Atom.to_string(filter_id), configuration: %{}}
+  end
+
+  # Gzip compression/decompression helpers
+  # Use actual gzip format (RFC 1952) not zlib format (RFC 1950)
+
+  @doc false
+  defp gzip_compress(data, level) when is_binary(data) do
+    z = :zlib.open()
+
+    try do
+      # windowBits = 16 + 15 enables gzip format
+      # 15 is the max window size, +16 adds gzip wrapper
+      :ok = :zlib.deflateInit(z, level, :deflated, 16 + 15, 8, :default)
+      compressed = :zlib.deflate(z, data, :finish)
+      :ok = :zlib.deflateEnd(z)
+      {:ok, IO.iodata_to_binary(compressed)}
+    catch
+      kind, reason ->
+        {:error, {:gzip_compression_failed, {kind, reason}}}
+    after
+      :zlib.close(z)
+    end
+  end
+
+  @doc false
+  defp gzip_decompress(data) when is_binary(data) do
+    z = :zlib.open()
+
+    try do
+      # windowBits = 16 + 15 enables gzip format
+      :ok = :zlib.inflateInit(z, 16 + 15)
+      decompressed = :zlib.inflate(z, data)
+      :ok = :zlib.inflateEnd(z)
+      {:ok, IO.iodata_to_binary(decompressed)}
+    catch
+      kind, reason ->
+        {:error, {:gzip_decompression_failed, {kind, reason}}}
+    after
+      :zlib.close(z)
+    end
   end
 end

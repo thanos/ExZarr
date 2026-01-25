@@ -140,6 +140,140 @@ def read_and_verify_array(path, expected_shape, expected_dtype, expected_checksu
         return {'success': False, 'error': str(e)}
 
 
+def create_v3_array(path, shape, chunks, dtype, codecs=None):
+    """Create a Zarr v3 array using zarr-python 3.x."""
+    try:
+        # Check if zarr 3.x is available
+        zarr_version = tuple(map(int, zarr.__version__.split('.')[:2]))
+        if zarr_version[0] < 3:
+            raise RuntimeError(f"zarr-python 3.x required, found {zarr.__version__}")
+
+        # Default codecs: bytes + gzip
+        if codecs is None:
+            codecs = [
+                {"name": "bytes"},
+                {"name": "gzip", "configuration": {"level": 5}}
+            ]
+
+        # Create v3 array
+        z = zarr.create(
+            store=path,
+            shape=shape,
+            chunks=chunks,
+            dtype=dtype,
+            zarr_format=3,
+            codecs=codecs,
+            fill_value=0
+        )
+
+        # Fill with test data
+        total_size = np.prod(shape)
+        if len(shape) == 1:
+            z[:] = np.arange(total_size, dtype=dtype)
+        elif len(shape) == 2:
+            z[:, :] = np.arange(total_size, dtype=dtype).reshape(shape)
+        elif len(shape) == 3:
+            z[:, :, :] = np.arange(total_size, dtype=dtype).reshape(shape)
+
+        # Calculate checksum
+        checksum = float(np.sum(z[:]))
+
+        return {'success': True, 'checksum': checksum}
+
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
+def read_v3_array(path):
+    """Read a Zarr v3 array and return its data and metadata."""
+    try:
+        z = zarr.open_array(path, mode='r')
+
+        # Check if it's v3
+        if hasattr(z.metadata, 'zarr_format'):
+            zarr_format = z.metadata.zarr_format
+        else:
+            zarr_format = 2  # Assume v2 if not specified
+
+        metadata = {
+            'zarr_format': zarr_format,
+            'shape': list(z.shape),
+            'chunks': list(z.chunks) if hasattr(z, 'chunks') else None,
+            'dtype': str(z.dtype),
+            'fill_value': float(z.fill_value) if z.fill_value is not None else None,
+        }
+
+        # Read data
+        data = z[:]
+        checksum = float(np.sum(data))
+
+        return {
+            'success': True,
+            'metadata': metadata,
+            'checksum': checksum
+        }
+
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
+def verify_v3_array(path, expected_shape, expected_dtype, expected_checksum):
+    """Verify a v3 array matches expected properties."""
+    try:
+        z = zarr.open_array(path, mode='r')
+
+        # Check shape
+        if list(z.shape) != list(expected_shape):
+            return {
+                'success': False,
+                'error': f'Shape mismatch: {z.shape} != {expected_shape}'
+            }
+
+        # Check dtype (normalize)
+        z_dtype = str(z.dtype)
+        if z_dtype.startswith('int'):
+            z_dtype = 'int' + str(z.dtype.itemsize * 8)
+        elif z_dtype.startswith('uint'):
+            z_dtype = 'uint' + str(z.dtype.itemsize * 8)
+        elif z_dtype.startswith('float'):
+            z_dtype = 'float' + str(z.dtype.itemsize * 8)
+
+        exp_dtype = expected_dtype.replace('<', '').replace('>', '')
+        if z_dtype != exp_dtype:
+            return {
+                'success': False,
+                'error': f'Dtype mismatch: {z_dtype} != {exp_dtype}'
+            }
+
+        # Check data checksum
+        data = z[:]
+        actual_checksum = float(np.sum(data))
+
+        if abs(actual_checksum - expected_checksum) > 0.0001:
+            return {
+                'success': False,
+                'error': f'Checksum mismatch: {actual_checksum} != {expected_checksum}'
+            }
+
+        return {'success': True, 'checksum': actual_checksum}
+
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
+def check_zarr_version():
+    """Check if zarr-python supports v3."""
+    try:
+        zarr_version = tuple(map(int, zarr.__version__.split('.')[:2]))
+        supports_v3 = zarr_version[0] >= 3
+        return {
+            'version': zarr.__version__,
+            'supports_v3': supports_v3
+        }
+    except Exception as e:
+        return {'error': str(e)}
+
+
 def main():
     if len(sys.argv) < 2:
         print(json.dumps({'error': 'No command specified'}))
@@ -148,7 +282,36 @@ def main():
     command = sys.argv[1]
 
     try:
-        if command == 'create_array':
+        if command == 'check_version':
+            # check_version
+            result = check_zarr_version()
+            print(json.dumps(result))
+
+        elif command == 'create_v3_array':
+            # create_v3_array <path> <shape> <chunks> <dtype>
+            path = sys.argv[2]
+            shape = json.loads(sys.argv[3])
+            chunks = json.loads(sys.argv[4])
+            dtype = sys.argv[5]
+            result = create_v3_array(path, tuple(shape), tuple(chunks), dtype)
+            print(json.dumps(result))
+
+        elif command == 'read_v3_array':
+            # read_v3_array <path>
+            path = sys.argv[2]
+            result = read_v3_array(path)
+            print(json.dumps(result))
+
+        elif command == 'verify_v3_array':
+            # verify_v3_array <path> <expected_shape> <expected_dtype> <expected_checksum>
+            path = sys.argv[2]
+            expected_shape = json.loads(sys.argv[3])
+            expected_dtype = sys.argv[4]
+            expected_checksum = float(sys.argv[5])
+            result = verify_v3_array(path, expected_shape, expected_dtype, expected_checksum)
+            print(json.dumps(result))
+
+        elif command == 'create_array':
             # create_array <path> <shape> <chunks> <dtype> <compressor> <fill_value>
             path = sys.argv[2]
             shape = json.loads(sys.argv[3])
