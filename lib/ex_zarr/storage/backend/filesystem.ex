@@ -97,7 +97,8 @@ defmodule ExZarr.Storage.Backend.Filesystem do
 
   @impl true
   def read_chunk(state, chunk_index) do
-    chunk_path = build_chunk_path(state.path, chunk_index)
+    version = detect_version(state.path)
+    chunk_path = build_chunk_path(state.path, chunk_index, version)
 
     case File.read(chunk_path) do
       {:ok, data} -> {:ok, data}
@@ -108,7 +109,8 @@ defmodule ExZarr.Storage.Backend.Filesystem do
 
   @impl true
   def write_chunk(state, chunk_index, data) do
-    chunk_path = build_chunk_path(state.path, chunk_index)
+    version = detect_version(state.path)
+    chunk_path = build_chunk_path(state.path, chunk_index, version)
     chunk_dir = Path.dirname(chunk_path)
 
     with :ok <- ensure_directory(chunk_dir) do
@@ -118,19 +120,44 @@ defmodule ExZarr.Storage.Backend.Filesystem do
 
   @impl true
   def read_metadata(state) do
-    metadata_path = Path.join(state.path, ".zarray")
+    # Try v3 first (zarr.json), then v2 (.zarray)
+    v3_path = Path.join(state.path, "zarr.json")
+    v2_path = Path.join(state.path, ".zarray")
 
-    case File.read(metadata_path) do
-      {:ok, json} -> {:ok, json}
-      {:error, :enoent} -> {:error, :not_found}
-      {:error, reason} -> {:error, reason}
+    case File.read(v3_path) do
+      {:ok, json} ->
+        {:ok, json}
+
+      {:error, :enoent} ->
+        # Try v2 format
+        case File.read(v2_path) do
+          {:ok, json} -> {:ok, json}
+          {:error, :enoent} -> {:error, :not_found}
+          {:error, reason} -> {:error, reason}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
   @impl true
   def write_metadata(state, metadata, _opts) when is_binary(metadata) do
-    metadata_path = Path.join(state.path, ".zarray")
-    File.write(metadata_path, metadata)
+    # Determine filename based on zarr_format in the JSON
+    case Jason.decode(metadata) do
+      {:ok, %{"zarr_format" => 3}} ->
+        metadata_path = Path.join(state.path, "zarr.json")
+        File.write(metadata_path, metadata)
+
+      {:ok, %{"zarr_format" => 2}} ->
+        metadata_path = Path.join(state.path, ".zarray")
+        File.write(metadata_path, metadata)
+
+      _ ->
+        # Default to v2 for backward compatibility
+        metadata_path = Path.join(state.path, ".zarray")
+        File.write(metadata_path, metadata)
+    end
   end
 
   def write_metadata(state, metadata, opts) do
@@ -188,14 +215,27 @@ defmodule ExZarr.Storage.Backend.Filesystem do
     end
   end
 
-  defp build_chunk_path(base_path, chunk_index) do
-    # Zarr uses dot-separated notation for chunk indices: 0.0, 0.1, etc.
-    chunk_name =
-      chunk_index
-      |> Tuple.to_list()
-      |> Enum.join(".")
+  # Detect zarr format version by checking which metadata file exists
+  defp detect_version(base_path) do
+    v3_path = Path.join(base_path, "zarr.json")
+    v2_path = Path.join(base_path, ".zarray")
 
-    Path.join(base_path, chunk_name)
+    cond do
+      File.exists?(v3_path) -> 3
+      File.exists?(v2_path) -> 2
+      # Default to v2 for new arrays
+      true -> 2
+    end
+  end
+
+  defp build_chunk_path(base_path, chunk_index, version) do
+    chunk_key = ExZarr.ChunkKey.encode(chunk_index, version)
+    Path.join(base_path, chunk_key)
+  end
+
+  # Legacy function for backward compatibility
+  defp build_chunk_path(base_path, chunk_index) do
+    build_chunk_path(base_path, chunk_index, 2)
   end
 
   defp chunk_file?(filename) do

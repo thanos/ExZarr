@@ -118,7 +118,7 @@ defmodule ExZarr.Version do
       iex> ExZarr.Version.supported_versions()
       [2, 3]
   """
-  @spec supported_versions() :: [version()]
+  @spec supported_versions() :: [version(), ...]
   def supported_versions, do: [2, 3]
 
   @doc """

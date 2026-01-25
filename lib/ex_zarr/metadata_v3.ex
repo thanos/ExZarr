@@ -50,6 +50,9 @@ defmodule ExZarr.MetadataV3 do
       }
   """
 
+  alias ExZarr.Codecs.PipelineV3
+  alias ExZarr.DataType
+
   @type node_type :: :array | :group
   @type data_type :: String.t()
   @type codec_spec :: %{required(:name) => String.t(), optional(:configuration) => map()}
@@ -126,21 +129,20 @@ defmodule ExZarr.MetadataV3 do
   def validate(%__MODULE__{} = metadata) do
     with :ok <- validate_zarr_format(metadata.zarr_format),
          :ok <- validate_node_type(metadata.node_type),
-         :ok <- validate_array_fields(metadata),
-         :ok <- validate_codecs(metadata) do
-      :ok
+         :ok <- validate_array_fields(metadata) do
+      validate_codecs(metadata)
     end
   end
 
   @doc false
-  @spec validate_zarr_format(term()) :: :ok | {:error, term()}
+  @spec validate_zarr_format(term()) :: :ok | {:error, {:invalid_zarr_format, String.t()}}
   defp validate_zarr_format(3), do: :ok
 
   defp validate_zarr_format(other),
     do: {:error, {:invalid_zarr_format, "Expected 3, got: #{inspect(other)}"}}
 
   @doc false
-  @spec validate_node_type(term()) :: :ok | {:error, term()}
+  @spec validate_node_type(term()) :: :ok | {:error, {:invalid_node_type, String.t()}}
   defp validate_node_type(node_type) when node_type in [:array, :group], do: :ok
 
   defp validate_node_type(other),
@@ -160,21 +162,27 @@ defmodule ExZarr.MetadataV3 do
          :ok <- validate_required_field(metadata.chunk_key_encoding, :chunk_key_encoding),
          :ok <- validate_required_field(metadata.codecs, :codecs),
          :ok <- validate_shape(metadata.shape),
-         :ok <- validate_data_type(metadata.data_type),
-         :ok <- validate_chunk_grid(metadata.chunk_grid) do
-      :ok
+         :ok <- validate_data_type(metadata.data_type) do
+      validate_chunk_grid(metadata.chunk_grid)
     end
   end
 
   @doc false
-  @spec validate_required_field(term(), atom()) :: :ok | {:error, term()}
+  @spec validate_required_field(
+          term(),
+          :shape | :data_type | :chunk_grid | :chunk_key_encoding | :codecs
+        ) ::
+          :ok
+          | {:error,
+             {:missing_required_field,
+              :shape | :data_type | :chunk_grid | :chunk_key_encoding | :codecs}}
   defp validate_required_field(nil, field_name),
     do: {:error, {:missing_required_field, field_name}}
 
   defp validate_required_field(_value, _field_name), do: :ok
 
   @doc false
-  @spec validate_shape(term()) :: :ok | {:error, term()}
+  @spec validate_shape(term()) :: :ok | {:error, {:invalid_shape, String.t()}}
   defp validate_shape(shape) when is_tuple(shape) do
     if tuple_size(shape) > 0 and Enum.all?(Tuple.to_list(shape), &is_integer(&1)) and
          Enum.all?(Tuple.to_list(shape), &(&1 > 0)) do
@@ -188,7 +196,7 @@ defmodule ExZarr.MetadataV3 do
     do: {:error, {:invalid_shape, "Expected tuple, got: #{inspect(other)}"}}
 
   @doc false
-  @spec validate_data_type(term()) :: :ok | {:error, term()}
+  @spec validate_data_type(term()) :: :ok | {:error, {:invalid_data_type, String.t()}}
   defp validate_data_type(data_type) when is_binary(data_type) do
     # v3 supports these core data types
     valid_types = [
@@ -217,7 +225,7 @@ defmodule ExZarr.MetadataV3 do
     do: {:error, {:invalid_data_type, "Expected string, got: #{inspect(other)}"}}
 
   @doc false
-  @spec validate_chunk_grid(term()) :: :ok | {:error, term()}
+  @spec validate_chunk_grid(term()) :: :ok | {:error, {:invalid_chunk_grid, String.t()}}
   defp validate_chunk_grid(%{name: name}) when is_binary(name) do
     # Extension point - any name is valid
     :ok
@@ -231,9 +239,8 @@ defmodule ExZarr.MetadataV3 do
   defp validate_codecs(%__MODULE__{node_type: :group}), do: :ok
 
   defp validate_codecs(%__MODULE__{node_type: :array, codecs: codecs}) when is_list(codecs) do
-    with :ok <- validate_codec_list(codecs),
-         :ok <- validate_array_to_bytes_codec(codecs) do
-      :ok
+    with :ok <- validate_codec_list(codecs) do
+      validate_array_to_bytes_codec(codecs)
     end
   end
 
@@ -241,7 +248,8 @@ defmodule ExZarr.MetadataV3 do
     do: {:error, {:missing_codecs, "Array must have codecs defined"}}
 
   @doc false
-  @spec validate_codec_list([term()]) :: :ok | {:error, term()}
+  @spec validate_codec_list([map()]) ::
+          :ok | {:error, {:empty_codecs, String.t()} | {:invalid_codec_format, String.t()}}
   defp validate_codec_list([]), do: {:error, {:empty_codecs, "Codec list cannot be empty"}}
 
   defp validate_codec_list(codecs) do
@@ -258,7 +266,7 @@ defmodule ExZarr.MetadataV3 do
   end
 
   @doc false
-  @spec validate_array_to_bytes_codec([codec_spec()]) :: :ok | {:error, term()}
+  @spec validate_array_to_bytes_codec([codec_spec()]) :: :ok
   defp validate_array_to_bytes_codec(codecs) do
     # Check for "bytes" codec which is the standard array→bytes codec
     has_bytes_codec = Enum.any?(codecs, fn codec -> Map.get(codec, :name) == "bytes" end)
@@ -398,5 +406,87 @@ defmodule ExZarr.MetadataV3 do
       error ->
         error
     end
+  end
+
+  @doc """
+  Creates v3 metadata from array configuration.
+
+  Converts v2-style configuration options into v3 metadata format with:
+  - Unified codec pipeline (converts filters + compressor to codecs array)
+  - Simplified data type names
+  - Regular chunk grid
+  - Default chunk key encoding
+
+  ## Parameters
+
+    * `config` - Configuration map with keys:
+      - `:shape` - Array dimensions (required)
+      - `:chunks` - Chunk dimensions (required)
+      - `:dtype` - Data type atom (required)
+      - `:compressor` - Compressor atom (optional, default :zstd)
+      - `:filters` - v2-style filter list (optional)
+      - `:codecs` - v3-style codec list (takes precedence over filters/compressor)
+      - `:fill_value` - Fill value (optional, default 0)
+      - `:attributes` - Custom attributes (optional, default %{})
+
+  ## Returns
+
+    * `{:ok, metadata}` - MetadataV3 struct
+
+  ## Examples
+
+      # Using v3 codecs directly
+      {:ok, metadata} = ExZarr.MetadataV3.create(%{
+        shape: {1000, 1000},
+        chunks: {100, 100},
+        dtype: :float64,
+        codecs: [
+          %{name: "bytes"},
+          %{name: "gzip", configuration: %{level: 5}}
+        ]
+      })
+
+      # Using v2-style filters and compressor (auto-converted)
+      {:ok, metadata} = ExZarr.MetadataV3.create(%{
+        shape: {1000, 1000},
+        chunks: {100, 100},
+        dtype: :float64,
+        filters: [{:shuffle, [elementsize: 8]}],
+        compressor: :zlib
+      })
+  """
+  @spec create(map()) :: {:ok, t()}
+  def create(config) do
+    # Handle both v3 codecs and v2 filters+compressor
+    codecs =
+      case Map.get(config, :codecs) do
+        nil ->
+          # Convert v2 style to v3 codecs
+          filters = Map.get(config, :filters, [])
+          compressor = Map.get(config, :compressor, :zstd)
+          PipelineV3.from_v2(filters, compressor)
+
+        codecs ->
+          # Use provided v3 codecs
+          codecs
+      end
+
+    metadata = %__MODULE__{
+      zarr_format: 3,
+      node_type: :array,
+      shape: Map.fetch!(config, :shape),
+      data_type: DataType.to_v3(Map.fetch!(config, :dtype)),
+      chunk_grid: %{
+        name: "regular",
+        configuration: %{chunk_shape: Map.fetch!(config, :chunks)}
+      },
+      chunk_key_encoding: %{name: "default"},
+      codecs: codecs,
+      fill_value: Map.get(config, :fill_value, 0),
+      attributes: Map.get(config, :attributes, %{}),
+      dimension_names: Map.get(config, :dimension_names, nil)
+    }
+
+    {:ok, metadata}
   end
 end

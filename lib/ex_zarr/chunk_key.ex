@@ -81,8 +81,7 @@ defmodule ExZarr.ChunkKey do
     # v2: dot-separated notation
     chunk_index
     |> Tuple.to_list()
-    |> Enum.map(&Integer.to_string/1)
-    |> Enum.join(".")
+    |> Enum.map_join(".", &Integer.to_string/1)
   end
 
   def encode(chunk_index, 3) when is_tuple(chunk_index) do
@@ -90,8 +89,7 @@ defmodule ExZarr.ChunkKey do
     indices =
       chunk_index
       |> Tuple.to_list()
-      |> Enum.map(&Integer.to_string/1)
-      |> Enum.join("/")
+      |> Enum.map_join("/", &Integer.to_string/1)
 
     "c/#{indices}"
   end
@@ -135,41 +133,37 @@ defmodule ExZarr.ChunkKey do
   @spec decode(chunk_key(), version()) :: {:ok, chunk_index()} | {:error, :invalid_chunk_key}
   def decode(chunk_key, 2) when is_binary(chunk_key) do
     # v2: split by ".", parse integers
-    try do
-      indices =
-        chunk_key
-        |> String.split(".")
-        |> Enum.map(&String.to_integer/1)
+    indices =
+      chunk_key
+      |> String.split(".")
+      |> Enum.map(&String.to_integer/1)
 
-      if Enum.all?(indices, &(&1 >= 0)) and length(indices) > 0 do
-        {:ok, List.to_tuple(indices)}
-      else
-        {:error, :invalid_chunk_key}
-      end
-    rescue
-      ArgumentError -> {:error, :invalid_chunk_key}
+    if indices != [] and Enum.all?(indices, &(&1 >= 0)) do
+      {:ok, List.to_tuple(indices)}
+    else
+      {:error, :invalid_chunk_key}
     end
+  rescue
+    ArgumentError -> {:error, :invalid_chunk_key}
   end
 
   def decode(chunk_key, 3) when is_binary(chunk_key) do
     # v3: strip "c/" prefix, split by "/"
-    try do
-      case String.split(chunk_key, "/") do
-        ["c" | [_ | _] = index_strings] ->
-          indices = Enum.map(index_strings, &String.to_integer/1)
+    case String.split(chunk_key, "/") do
+      ["c" | [_ | _] = index_strings] ->
+        indices = Enum.map(index_strings, &String.to_integer/1)
 
-          if Enum.all?(indices, &(&1 >= 0)) do
-            {:ok, List.to_tuple(indices)}
-          else
-            {:error, :invalid_chunk_key}
-          end
-
-        _ ->
+        if Enum.all?(indices, &(&1 >= 0)) do
+          {:ok, List.to_tuple(indices)}
+        else
           {:error, :invalid_chunk_key}
-      end
-    rescue
-      ArgumentError -> {:error, :invalid_chunk_key}
+        end
+
+      _ ->
+        {:error, :invalid_chunk_key}
     end
+  rescue
+    ArgumentError -> {:error, :invalid_chunk_key}
   end
 
   @doc """

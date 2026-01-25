@@ -164,7 +164,8 @@ defmodule ExZarr.Codecs.PipelineV3Test do
       data = <<1, 2, 3, 4, 5, 6, 7, 8>>
 
       {:ok, encoded} = PipelineV3.encode(data, pipeline)
-      assert encoded == data  # Bytes codec is pass-through
+      # Bytes codec is pass-through
+      assert encoded == data
 
       {:ok, decoded} = PipelineV3.decode(encoded, pipeline)
       assert decoded == data
@@ -182,7 +183,8 @@ defmodule ExZarr.Codecs.PipelineV3Test do
       data = String.duplicate(<<1, 2, 3, 4>>, 100)
 
       {:ok, encoded} = PipelineV3.encode(data, pipeline)
-      assert byte_size(encoded) < byte_size(data)  # Should be compressed
+      # Should be compressed
+      assert byte_size(encoded) < byte_size(data)
 
       {:ok, decoded} = PipelineV3.decode(encoded, pipeline)
       assert decoded == data
@@ -360,6 +362,7 @@ defmodule ExZarr.Codecs.PipelineV3Test do
       }
 
       data = <<1, 2, 3, 4>>
+
       assert {:error, {:unsupported_array_to_array_codec, "unsupported_filter"}} =
                PipelineV3.encode(data, pipeline)
     end
@@ -372,6 +375,7 @@ defmodule ExZarr.Codecs.PipelineV3Test do
       }
 
       data = <<1, 2, 3, 4>>
+
       assert {:error, {:unsupported_compression_codec, "unsupported_compression"}} =
                PipelineV3.encode(data, pipeline)
     end
@@ -432,10 +436,11 @@ defmodule ExZarr.Codecs.PipelineV3Test do
       codecs = [%{name: "bytes"}]
       {:ok, pipeline} = PipelineV3.parse_codecs(codecs)
 
-      data = :crypto.strong_rand_bytes(10000)
+      data = :crypto.strong_rand_bytes(10_000)
 
       {:ok, encoded} = PipelineV3.encode(data, pipeline)
-      assert encoded == data  # No transformation
+      # No transformation
+      assert encoded == data
 
       {:ok, decoded} = PipelineV3.decode(encoded, pipeline)
       assert decoded == data

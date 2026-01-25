@@ -266,7 +266,7 @@ defmodule ExZarr.DataType do
       iex> ExZarr.DataType.itemsize("int16")
       2
   """
-  @spec itemsize(dtype_atom() | v3_data_type()) :: pos_integer()
+  @spec itemsize(dtype_atom() | v3_data_type()) :: 1 | 2 | 4 | 8
   def itemsize(dtype) when is_atom(dtype) do
     case dtype do
       :int8 -> 1
@@ -378,7 +378,7 @@ defmodule ExZarr.DataType do
       iex> ExZarr.DataType.supported_types()
       [:int8, :int16, :int32, :int64, :uint8, :uint16, :uint32, :uint64, :float32, :float64]
   """
-  @spec supported_types() :: [dtype_atom()]
+  @spec supported_types() :: [dtype_atom(), ...]
   def supported_types do
     [:int8, :int16, :int32, :int64, :uint8, :uint16, :uint32, :uint64, :float32, :float64]
   end
@@ -419,19 +419,17 @@ defmodule ExZarr.DataType do
   end
 
   def validate(dtype_string) when is_binary(dtype_string) do
-    try do
-      # Try v3 first
-      _atom = from_v3(dtype_string)
-      :ok
-    rescue
-      ArgumentError ->
+    # Try v3 first
+    _atom = from_v3(dtype_string)
+    :ok
+  rescue
+    ArgumentError ->
+      try do
         # Try v2
-        try do
-          _atom = from_v2(dtype_string)
-          :ok
-        rescue
-          ArgumentError -> {:error, :unsupported_dtype}
-        end
-    end
+        _atom = from_v2(dtype_string)
+        :ok
+      rescue
+        ArgumentError -> {:error, :unsupported_dtype}
+      end
   end
 end

@@ -462,7 +462,7 @@ defmodule ExZarr.Storage do
       Map.merge(base, %{
         shape: Tuple.to_list(metadata.shape),
         data_type: metadata.data_type,
-        chunk_grid: metadata.chunk_grid,
+        chunk_grid: encode_chunk_grid(metadata.chunk_grid),
         chunk_key_encoding: metadata.chunk_key_encoding || %{name: "default"},
         codecs: encode_codecs_v3(metadata.codecs),
         fill_value: metadata.fill_value,
@@ -473,10 +473,20 @@ defmodule ExZarr.Storage do
     end
   end
 
+  # Convert chunk_grid to JSON-compatible format (tuples to lists)
+  defp encode_chunk_grid(%{name: name, configuration: %{chunk_shape: chunk_shape} = config}) do
+    %{
+      name: name,
+      configuration: Map.put(config, :chunk_shape, Tuple.to_list(chunk_shape))
+    }
+  end
+
+  defp encode_chunk_grid(chunk_grid), do: chunk_grid
+
   # Encode v3 codec specifications to JSON format
   defp encode_codecs_v3(codecs) when is_list(codecs) do
     Enum.map(codecs, fn codec ->
-      case codec.configuration do
+      case Map.get(codec, :configuration, %{}) do
         config when map_size(config) == 0 ->
           %{name: codec.name}
 

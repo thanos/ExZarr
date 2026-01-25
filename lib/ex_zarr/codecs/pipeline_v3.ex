@@ -68,7 +68,16 @@ defmodule ExZarr.Codecs.PipelineV3 do
   end
 
   # Codec stage classifications
-  @array_to_array_codecs ["transpose", "shuffle", "delta", "bitround", "quantize", "fixedscaleoffset", "astype", "packbits"]
+  @array_to_array_codecs [
+    "transpose",
+    "shuffle",
+    "delta",
+    "bitround",
+    "quantize",
+    "fixedscaleoffset",
+    "astype",
+    "packbits"
+  ]
   @array_to_bytes_codecs ["bytes"]
   @bytes_to_bytes_codecs ["gzip", "zstd", "blosc", "lz4", "bz2", "crc32c"]
 
@@ -108,11 +117,12 @@ defmodule ExZarr.Codecs.PipelineV3 do
   def parse_codecs(codec_specs) when is_list(codec_specs) do
     with {:ok, stages} <- classify_codecs(codec_specs),
          :ok <- validate_pipeline(stages) do
-      {:ok, %Pipeline{
-        array_to_array: stages.array_to_array,
-        array_to_bytes: stages.array_to_bytes,
-        bytes_to_bytes: stages.bytes_to_bytes
-      }}
+      {:ok,
+       %Pipeline{
+         array_to_array: stages.array_to_array,
+         array_to_bytes: stages.array_to_bytes,
+         bytes_to_bytes: stages.bytes_to_bytes
+       }}
     end
   end
 
@@ -127,7 +137,7 @@ defmodule ExZarr.Codecs.PipelineV3 do
             # Array→Array after Array→Bytes (wrong order)
             {:halt, {:error, :invalid_codec_order}}
 
-          {:array_to_array, _} when length(b2b) > 0 ->
+          {:array_to_array, _} when b2b != [] ->
             # Array→Array after Bytes→Bytes (wrong order)
             {:halt, {:error, :invalid_codec_order}}
 
@@ -138,7 +148,7 @@ defmodule ExZarr.Codecs.PipelineV3 do
             # Multiple Array→Bytes codecs
             {:halt, {:error, :multiple_array_to_bytes_codecs}}
 
-          {:array_to_bytes, _} when length(b2b) > 0 ->
+          {:array_to_bytes, _} when b2b != [] ->
             # Array→Bytes after Bytes→Bytes (wrong order)
             {:halt, {:error, :invalid_codec_order}}
 
@@ -155,11 +165,12 @@ defmodule ExZarr.Codecs.PipelineV3 do
 
     case classified do
       {:ok, a2a, a2b, b2b} ->
-        {:ok, %{
-          array_to_array: Enum.reverse(a2a),
-          array_to_bytes: a2b,
-          bytes_to_bytes: Enum.reverse(b2b)
-        }}
+        {:ok,
+         %{
+           array_to_array: Enum.reverse(a2a),
+           array_to_bytes: a2b,
+           bytes_to_bytes: Enum.reverse(b2b)
+         }}
 
       error ->
         error
@@ -189,7 +200,7 @@ defmodule ExZarr.Codecs.PipelineV3 do
   defp classify_codec(_), do: {:error, :invalid_codec_format}
 
   @doc false
-  @spec validate_pipeline(map()) :: :ok | {:error, term()}
+  @spec validate_pipeline(map()) :: :ok | {:error, :missing_array_to_bytes_codec}
   defp validate_pipeline(%{array_to_bytes: nil}) do
     {:error, :missing_array_to_bytes_codec}
   end
@@ -218,9 +229,9 @@ defmodule ExZarr.Codecs.PipelineV3 do
   @spec encode(binary(), Pipeline.t(), keyword()) :: {:ok, binary()} | {:error, term()}
   def encode(data, %Pipeline{} = pipeline, opts \\ []) do
     with {:ok, transformed} <- apply_array_to_array_encode(data, pipeline.array_to_array, opts),
-         {:ok, serialized} <- apply_array_to_bytes_encode(transformed, pipeline.array_to_bytes, opts),
-         {:ok, compressed} <- apply_bytes_to_bytes_encode(serialized, pipeline.bytes_to_bytes, opts) do
-      {:ok, compressed}
+         {:ok, serialized} <-
+           apply_array_to_bytes_encode(transformed, pipeline.array_to_bytes, opts) do
+      apply_bytes_to_bytes_encode(serialized, pipeline.bytes_to_bytes, opts)
     end
   end
 
@@ -246,9 +257,9 @@ defmodule ExZarr.Codecs.PipelineV3 do
   @spec decode(binary(), Pipeline.t(), keyword()) :: {:ok, binary()} | {:error, term()}
   def decode(data, %Pipeline{} = pipeline, opts \\ []) do
     with {:ok, decompressed} <- apply_bytes_to_bytes_decode(data, pipeline.bytes_to_bytes, opts),
-         {:ok, deserialized} <- apply_array_to_bytes_decode(decompressed, pipeline.array_to_bytes, opts),
-         {:ok, untransformed} <- apply_array_to_array_decode(deserialized, pipeline.array_to_array, opts) do
-      {:ok, untransformed}
+         {:ok, deserialized} <-
+           apply_array_to_bytes_decode(decompressed, pipeline.array_to_bytes, opts) do
+      apply_array_to_array_decode(deserialized, pipeline.array_to_array, opts)
     end
   end
 
@@ -324,7 +335,13 @@ defmodule ExZarr.Codecs.PipelineV3 do
   @doc false
   defp apply_codec_encode(%{name: "shuffle"} = codec, data, opts) do
     config = Map.get(codec, :configuration, %{})
-    elementsize = Map.get(config, :elementsize, Map.get(config, "elementsize", Keyword.get(opts, :itemsize, 8)))
+
+    elementsize =
+      Map.get(
+        config,
+        :elementsize,
+        Map.get(config, "elementsize", Keyword.get(opts, :itemsize, 8))
+      )
 
     # Shuffle: transpose byte matrix to group similar byte positions
     shuffle_bytes(data, elementsize)
@@ -333,7 +350,11 @@ defmodule ExZarr.Codecs.PipelineV3 do
   defp apply_codec_encode(%{name: "delta"} = codec, data, opts) do
     config = Map.get(codec, :configuration, %{})
     dtype_str = Map.get(config, :dtype, Map.get(config, "dtype"))
-    dtype = if is_binary(dtype_str), do: ExZarr.DataType.from_v3(dtype_str), else: Keyword.get(opts, :dtype, :int64)
+
+    dtype =
+      if is_binary(dtype_str),
+        do: ExZarr.DataType.from_v3(dtype_str),
+        else: Keyword.get(opts, :dtype, :int64)
 
     # Delta encoding: store differences
     encode_delta(data, dtype)
@@ -347,7 +368,13 @@ defmodule ExZarr.Codecs.PipelineV3 do
   @doc false
   defp apply_codec_decode(%{name: "shuffle"} = codec, data, opts) do
     config = Map.get(codec, :configuration, %{})
-    elementsize = Map.get(config, :elementsize, Map.get(config, "elementsize", Keyword.get(opts, :itemsize, 8)))
+
+    elementsize =
+      Map.get(
+        config,
+        :elementsize,
+        Map.get(config, "elementsize", Keyword.get(opts, :itemsize, 8))
+      )
 
     # Unshuffle: transpose back to original byte order
     unshuffle_bytes(data, elementsize)
@@ -356,7 +383,11 @@ defmodule ExZarr.Codecs.PipelineV3 do
   defp apply_codec_decode(%{name: "delta"} = codec, data, opts) do
     config = Map.get(codec, :configuration, %{})
     dtype_str = Map.get(config, :dtype, Map.get(config, "dtype"))
-    dtype = if is_binary(dtype_str), do: ExZarr.DataType.from_v3(dtype_str), else: Keyword.get(opts, :dtype, :int64)
+
+    dtype =
+      if is_binary(dtype_str),
+        do: ExZarr.DataType.from_v3(dtype_str),
+        else: Keyword.get(opts, :dtype, :int64)
 
     # Delta decoding: reconstruct from differences
     decode_delta(data, dtype)
@@ -426,7 +457,7 @@ defmodule ExZarr.Codecs.PipelineV3 do
         |> :binary.bin_to_list()
         |> Enum.chunk_every(itemsize)
         |> Enum.map(&:binary.list_to_bin/1)
-        |> Enum.scan(first, fn current, previous ->
+        |> Enum.scan(first, fn current, _previous ->
           # Compute difference (simplified for now)
           current
         end)
@@ -517,8 +548,12 @@ defmodule ExZarr.Codecs.PipelineV3 do
     # Convert filters to v3 array→array codecs
     filter_codecs =
       case filters do
-        nil -> []
-        [] -> []
+        nil ->
+          []
+
+        [] ->
+          []
+
         list when is_list(list) ->
           Enum.map(list, fn {filter_id, opts} ->
             filter_to_v3_codec(filter_id, opts)
@@ -556,10 +591,14 @@ defmodule ExZarr.Codecs.PipelineV3 do
 
   defp filter_to_v3_codec(:quantize, opts) do
     dtype = opts[:dtype] || :float64
-    %{name: "quantize", configuration: %{
-      digits: opts[:digits] || 3,
-      dtype: ExZarr.DataType.to_v3(dtype)
-    }}
+
+    %{
+      name: "quantize",
+      configuration: %{
+        digits: opts[:digits] || 3,
+        dtype: ExZarr.DataType.to_v3(dtype)
+      }
+    }
   end
 
   defp filter_to_v3_codec(filter_id, _opts) do

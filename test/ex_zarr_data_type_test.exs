@@ -127,7 +127,18 @@ defmodule ExZarr.DataTypeTest do
 
   describe "bidirectional conversion" do
     test "v3 round-trip" do
-      types = [:int8, :int16, :int32, :int64, :uint8, :uint16, :uint32, :uint64, :float32, :float64]
+      types = [
+        :int8,
+        :int16,
+        :int32,
+        :int64,
+        :uint8,
+        :uint16,
+        :uint32,
+        :uint64,
+        :float32,
+        :float64
+      ]
 
       for dtype <- types do
         v3_str = ExZarr.DataType.to_v3(dtype)
@@ -136,7 +147,18 @@ defmodule ExZarr.DataTypeTest do
     end
 
     test "v2 round-trip" do
-      types = [:int8, :int16, :int32, :int64, :uint8, :uint16, :uint32, :uint64, :float32, :float64]
+      types = [
+        :int8,
+        :int16,
+        :int32,
+        :int64,
+        :uint8,
+        :uint16,
+        :uint32,
+        :uint64,
+        :float32,
+        :float64
+      ]
 
       for dtype <- types do
         v2_str = ExZarr.DataType.to_v2(dtype)
