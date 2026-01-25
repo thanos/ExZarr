@@ -34,7 +34,7 @@ jobs:
             lint: true
             coverage: true
           # Previous versions for compatibility
-          - elixir: "1.18.4"
+          - elixir: "1.18.4-otp-27"
             otp: "27.3"
           - elixir: "1.17.3"
             otp: "26.2"
