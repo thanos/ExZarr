@@ -645,4 +645,3 @@ Migrating from v2 to v3 in ExZarr:
 5. **Best practice**: Write version-agnostic code using ExZarr's API
 
 The transition from v2 to v3 is designed to be gradual and non-breaking. ExZarr handles version differences internally, allowing you to focus on your application logic.
-

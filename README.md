@@ -142,7 +142,7 @@ v2-style configuration is automatically converted when creating v3 arrays:
 # ]
 ```
 
-For detailed migration guidance, see [V2_TO_V3_MIGRATION.md](V2_TO_V3_MIGRATION.md).
+For detailed migration guidance, see [docs/V2_TO_V3_MIGRATION.md](docs/V2_TO_V3_MIGRATION.md).
 
 ### Working with Groups
 

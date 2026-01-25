@@ -66,7 +66,7 @@ defmodule ExZarr.MixProject do
       {:jason, "~> 1.4"},
 
       # Zig NIFs for compression codecs
-      {:zigler, "~> 0.13", runtime: false},
+      {:zigler, "~> 0.13.0", runtime: false},
 
       # Cloud storage backends (optional)
       {:ex_aws, "~> 2.5", optional: true},
