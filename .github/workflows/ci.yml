@@ -46,10 +46,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libzstd-dev liblz4-dev libsnappy-dev libblosc-dev libbz2-dev
-      - name: Install Zig
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.13.0
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -68,6 +65,14 @@ jobs:
           key: ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('**/mix.lock') }}
           restore-keys: |
             ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ matrix.otp }}-
+
+      - name: Cache Zig
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/zig
+          key: ${{ runner.os }}-zig-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-zig-
 
       - name: Install dependencies
         run: mix deps.get
@@ -111,10 +116,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libzstd-dev liblz4-dev libsnappy-dev libblosc-dev libbz2-dev
 
-      - name: Install Zig
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.13.0
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -172,10 +173,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libzstd-dev liblz4-dev libsnappy-dev libblosc-dev libbz2-dev
 
-      - name: Install Zig
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.13.0
 
       - name: Checkout code
         uses: actions/checkout@v4

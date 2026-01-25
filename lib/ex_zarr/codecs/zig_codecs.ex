@@ -56,7 +56,11 @@ defmodule ExZarr.Codecs.ZigCodecs do
   alias ExZarr.Codecs.CompressionConfig
 
   # Get library paths from configuration (supports environment variable overrides)
-  @library_dirs CompressionConfig.library_dirs()
+  # On Linux, library_dirs can be empty as the linker finds system libraries automatically
+  @library_dirs (case :os.type() do
+                   {:unix, :darwin} -> CompressionConfig.library_dirs()
+                   _ -> []
+                 end)
 
   use Zig,
     otp_app: :ex_zarr,
