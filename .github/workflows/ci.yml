@@ -34,7 +34,7 @@ jobs:
             lint: true
             coverage: true
           # Previous versions for compatibility
-          - elixir: "1.18.4-otp-27"
+          - elixir: "1.18.4"
             otp: "27.3"
           - elixir: "1.17.3"
             otp: "26.2"
@@ -46,7 +46,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libzstd-dev liblz4-dev libsnappy-dev libblosc-dev libbz2-dev
-
+      - name: Install Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -116,6 +119,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libzstd-dev liblz4-dev libsnappy-dev libblosc-dev libbz2-dev
 
+      - name: Install Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -173,6 +180,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libzstd-dev liblz4-dev libsnappy-dev libblosc-dev libbz2-dev
 
+      - name: Install Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
 
       - name: Checkout code
         uses: actions/checkout@v4
