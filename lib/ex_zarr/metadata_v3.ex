@@ -839,6 +839,295 @@ defmodule ExZarr.MetadataV3 do
   defp parse_codec_configuration(_name, config), do: config
 
   @doc """
+  Converts Zarr v2 metadata to v3 format.
+
+  Transforms v2 metadata structure to v3 with the following conversions:
+  - Combines `filters` and `compressor` into unified `codecs` array
+  - Converts NumPy dtype (e.g., "<f8") to v3 data type (e.g., "float64")
+  - Creates regular chunk grid from `chunks` field
+  - Sets default chunk key encoding
+  - Preserves attributes and fill value
+
+  ## Parameters
+
+    * `v2_metadata` - ExZarr.Metadata struct (v2 format)
+
+  ## Returns
+
+    * `{:ok, metadata}` - MetadataV3 struct
+    * `{:error, reason}` - If conversion fails
+
+  ## Examples
+
+      iex> v2_metadata = %ExZarr.Metadata{
+      ...>   zarr_format: 2,
+      ...>   shape: {1000, 1000},
+      ...>   chunks: {100, 100},
+      ...>   dtype: :float64,
+      ...>   compressor: :zlib,
+      ...>   fill_value: 0.0,
+      ...>   order: "C",
+      ...>   filters: nil
+      ...> }
+      iex> {:ok, v3_metadata} = ExZarr.MetadataV3.from_v2(v2_metadata)
+      iex> v3_metadata.zarr_format
+      3
+      iex> v3_metadata.data_type
+      "float64"
+
+  ## Limitations
+
+  Some v2 features cannot be fully represented in v3:
+  - Order ("C" vs "F") is not directly represented (row-major is default in v3)
+  - Custom v2 filters may not have exact v3 codec equivalents
+  """
+  @spec from_v2(ExZarr.Metadata.t()) :: {:ok, t()}
+  def from_v2(%ExZarr.Metadata{} = v2_metadata) do
+    # Convert filters and compressor to v3 codec pipeline
+    codecs = PipelineV3.from_v2(v2_metadata.filters || [], v2_metadata.compressor)
+
+    metadata = %__MODULE__{
+      zarr_format: 3,
+      node_type: :array,
+      shape: v2_metadata.shape,
+      data_type: DataType.to_v3(v2_metadata.dtype),
+      chunk_grid: %{
+        name: "regular",
+        configuration: %{chunk_shape: v2_metadata.chunks}
+      },
+      chunk_key_encoding: %{name: "default"},
+      codecs: codecs,
+      fill_value: v2_metadata.fill_value,
+      attributes: %{},
+      dimension_names: nil
+    }
+
+    {:ok, metadata}
+  end
+
+  @doc """
+  Converts Zarr v3 metadata to v2 format (best effort).
+
+  Attempts to convert v3 metadata to v2 format with the following limitations:
+  - v3-specific features (sharding, dimension names) are lost
+  - Unified codec pipeline is split into filters and compressor
+  - Only "regular" chunk grids are supported
+  - Data type is converted from v3 to NumPy dtype
+
+  ## Parameters
+
+    * `v3_metadata` - MetadataV3 struct
+
+  ## Returns
+
+    * `{:ok, metadata}` - ExZarr.Metadata struct (v2 format)
+    * `{:error, reason}` - If conversion is not possible
+
+  ## Examples
+
+      iex> v3_metadata = %ExZarr.MetadataV3{
+      ...>   zarr_format: 3,
+      ...>   node_type: :array,
+      ...>   shape: {1000, 1000},
+      ...>   data_type: "float64",
+      ...>   chunk_grid: %{name: "regular", configuration: %{chunk_shape: {100, 100}}},
+      ...>   chunk_key_encoding: %{name: "default"},
+      ...>   codecs: [%{name: "bytes"}, %{name: "gzip", configuration: %{level: 5}}],
+      ...>   fill_value: 0.0,
+      ...>   attributes: %{}
+      ...> }
+      iex> {:ok, v2_metadata} = ExZarr.MetadataV3.to_v2(v3_metadata)
+      iex> v2_metadata.zarr_format
+      2
+      iex> v2_metadata.dtype
+      :float64
+
+  ## Limitations
+
+  The following v3 features cannot be converted to v2:
+  - Sharding codec (returns error)
+  - Dimension names (silently dropped)
+  - Irregular chunk grids (returns error)
+  - Custom chunk key encodings (silently uses v2 default)
+  - Array→Array codecs (transpose, quantize, bitround) may be lost
+  """
+  @spec to_v2(t()) :: {:ok, ExZarr.Metadata.t()} | {:error, term()}
+  def to_v2(%__MODULE__{node_type: :group}) do
+    {:error, {:cannot_convert, "Groups are not supported in Zarr v2 format"}}
+  end
+
+  def to_v2(%__MODULE__{node_type: :array} = v3_metadata) do
+    with :ok <- validate_v2_compatible_chunk_grid(v3_metadata.chunk_grid),
+         :ok <- validate_no_sharding(v3_metadata.codecs),
+         {:ok, chunks} <- extract_chunk_shape(v3_metadata.chunk_grid),
+         {:ok, {filters, compressor}} <- split_codec_pipeline(v3_metadata.codecs),
+         {:ok, dtype_atom} <- convert_data_type_to_v2(v3_metadata.data_type) do
+      metadata = %ExZarr.Metadata{
+        zarr_format: 2,
+        shape: v3_metadata.shape,
+        chunks: chunks,
+        dtype: dtype_atom,
+        compressor: compressor,
+        fill_value: v3_metadata.fill_value || 0,
+        order: "C",
+        filters: filters
+      }
+
+      {:ok, metadata}
+    end
+  end
+
+  @doc false
+  defp validate_v2_compatible_chunk_grid(%{name: "regular"}), do: :ok
+
+  defp validate_v2_compatible_chunk_grid(%{name: name}) do
+    {:error,
+     {:cannot_convert,
+      "Chunk grid '#{name}' is not supported in v2. Only 'regular' chunk grids can be converted."}}
+  end
+
+  defp validate_v2_compatible_chunk_grid(_) do
+    {:error, {:cannot_convert, "Invalid chunk grid configuration"}}
+  end
+
+  @doc false
+  defp validate_no_sharding(nil), do: :ok
+  defp validate_no_sharding([]), do: :ok
+
+  defp validate_no_sharding(codecs) when is_list(codecs) do
+    has_sharding = Enum.any?(codecs, fn codec -> Map.get(codec, :name) == "sharding_indexed" end)
+
+    if has_sharding do
+      {:error,
+       {:cannot_convert,
+        "Sharding codec is not supported in v2. Remove sharding before converting."}}
+    else
+      :ok
+    end
+  end
+
+  @doc false
+  defp extract_chunk_shape(%{configuration: %{chunk_shape: chunks}}) when is_tuple(chunks) do
+    {:ok, chunks}
+  end
+
+  defp extract_chunk_shape(%{configuration: config}) do
+    {:error,
+     {:cannot_convert, "Cannot extract chunk_shape from configuration: #{inspect(config)}"}}
+  end
+
+  defp extract_chunk_shape(_) do
+    {:error, {:cannot_convert, "Missing chunk_shape in chunk_grid configuration"}}
+  end
+
+  @doc false
+  defp split_codec_pipeline(nil), do: {:ok, {nil, nil}}
+  defp split_codec_pipeline([]), do: {:ok, {nil, nil}}
+
+  defp split_codec_pipeline(codecs) when is_list(codecs) do
+    # Split codecs into array→array filters and bytes→bytes compressor
+    # v2 format: [array→array filters...] → bytes → [bytes→bytes compressor]
+
+    # Find the bytes codec
+    bytes_index = Enum.find_index(codecs, fn codec -> Map.get(codec, :name) == "bytes" end)
+
+    if bytes_index do
+      # Codecs before bytes are array→array (filters in v2)
+      array_to_array = Enum.take(codecs, bytes_index)
+
+      # Codecs after bytes are bytes→bytes (compressor in v2)
+      bytes_to_bytes = Enum.drop(codecs, bytes_index + 1)
+
+      # Convert array→array codecs to v2 filters
+      filters = convert_to_v2_filters(array_to_array)
+
+      # Convert bytes→bytes codecs to v2 compressor
+      compressor = convert_to_v2_compressor(bytes_to_bytes)
+
+      {:ok, {filters, compressor}}
+    else
+      # No bytes codec - try to infer
+      {:ok, {nil, :zlib}}
+    end
+  end
+
+  @doc false
+  defp convert_to_v2_filters([]), do: nil
+
+  defp convert_to_v2_filters(array_codecs) do
+    # Convert v3 array→array codecs to v2 filters
+    filters =
+      Enum.flat_map(array_codecs, fn codec ->
+        case Map.get(codec, :name) do
+          "shuffle" ->
+            [{:shuffle, []}]
+
+          "delta" ->
+            [{:delta, []}]
+
+          # Transpose, quantize, bitround have no v2 equivalent - skip them
+          "transpose" ->
+            []
+
+          "quantize" ->
+            []
+
+          "bitround" ->
+            []
+
+          _ ->
+            []
+        end
+      end)
+
+    case filters do
+      [] -> nil
+      filters -> filters
+    end
+  end
+
+  @doc false
+  defp convert_to_v2_compressor([]), do: :zlib
+
+  defp convert_to_v2_compressor(codecs) when is_list(codecs) do
+    # Find the first compression codec (skip crc32c)
+    compression_codec =
+      Enum.find(codecs, fn codec ->
+        name = Map.get(codec, :name)
+        name in ["gzip", "zlib", "blosc", "zstd", "lz4", "bz2"]
+      end)
+
+    case compression_codec do
+      nil ->
+        # No compression codec found, default to zlib
+        :zlib
+
+      codec ->
+        case Map.get(codec, :name) do
+          "gzip" -> :gzip
+          "zlib" -> :zlib
+          "blosc" -> :blosc
+          "zstd" -> :zstd
+          "lz4" -> :lz4
+          "bz2" -> :bz2
+          _ -> :zlib
+        end
+    end
+  end
+
+  @doc false
+  defp convert_data_type_to_v2(nil) do
+    {:error, {:cannot_convert, "Missing data_type"}}
+  end
+
+  defp convert_data_type_to_v2(data_type) when is_binary(data_type) do
+    dtype_atom = DataType.from_v3(data_type)
+    {:ok, dtype_atom}
+  rescue
+    _ -> {:error, {:cannot_convert, "Unknown data type: #{data_type}"}}
+  end
+
+  @doc """
   Creates v3 metadata from array configuration.
 
   Converts v2-style configuration options into v3 metadata format with:
