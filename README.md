@@ -10,7 +10,8 @@ Elixir implementation of [Zarr](https://zarr.dev): compressed, chunked, N-dimens
 - **Flexible storage** backends (in-memory, filesystem, and zip archive)
 - **Custom storage backends** with plugin architecture for S3, databases, and more
 - **Hierarchical groups** for organizing multiple arrays
-- **Zarr v2 specification** compatibility for interoperability with other Zarr implementations
+- **Zarr v2 and v3 specification** support with automatic version detection
+- **Full backward compatibility** - seamlessly work with both v2 and v3 arrays
 - **Property-based testing** with comprehensive test coverage
 
 ## Installation
@@ -20,7 +21,7 @@ Add `ex_zarr` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_zarr, "~> 0.3.1"}
+    {:ex_zarr, "~> 0.4.0"}
   ]
 end
 ```
@@ -52,6 +53,96 @@ end
 # Load entire array into memory
 {:ok, data} = ExZarr.load(path: "/tmp/my_array")
 ```
+
+## Zarr Format Support
+
+ExZarr supports both Zarr v2 and v3 specifications. Arrays can be created in either format, and opening arrays automatically detects the version.
+
+### Zarr v3 (Recommended for New Projects)
+
+Zarr v3 introduces a unified codec pipeline and improved metadata format:
+
+```elixir
+# Create v3 array with unified codec pipeline
+{:ok, array} = ExZarr.create(
+  shape: {1000, 1000},
+  chunks: {100, 100},
+  dtype: :float64,
+  codecs: [
+    %{name: "bytes"},  # Required array-to-bytes codec
+    %{name: "gzip", configuration: %{level: 5}}  # Optional compression
+  ],
+  zarr_version: 3,
+  storage: :filesystem,
+  path: "/tmp/my_v3_array"
+)
+```
+
+### Zarr v2 (Default for Compatibility)
+
+Zarr v2 uses separate filters and compressor configuration:
+
+```elixir
+# Create v2 array (explicit version)
+{:ok, array} = ExZarr.create(
+  shape: {1000, 1000},
+  chunks: {100, 100},
+  dtype: :float64,
+  filters: [{:shuffle, [elementsize: 8]}],
+  compressor: :zlib,
+  zarr_version: 2,
+  storage: :filesystem,
+  path: "/tmp/my_v2_array"
+)
+```
+
+### Automatic Version Detection
+
+When opening arrays, ExZarr automatically detects the format version:
+
+```elixir
+# Opens v2 or v3 transparently
+{:ok, array} = ExZarr.open(path: "/tmp/my_array")
+
+# Check which version was detected
+array.version  # Returns 2 or 3
+```
+
+### Key Differences Between v2 and v3
+
+| Feature | v2 | v3 |
+|---------|----|----|
+| Metadata file | `.zarray` | `zarr.json` |
+| Chunk keys | Dot-separated (`0.1.2`) | Slash-separated with prefix (`c/0/1/2`) |
+| Codec organization | Separate `filters` and `compressor` | Unified `codecs` array |
+| Data types | NumPy-style strings (`<f8`) | Simplified names (`float64`) |
+| Groups | Separate `.zgroup` files | Unified `zarr.json` with `node_type` |
+| Attributes | Separate `.zattrs` files | Embedded in `zarr.json` |
+
+### Converting from v2 to v3
+
+v2-style configuration is automatically converted when creating v3 arrays:
+
+```elixir
+# This v2-style configuration
+{:ok, array} = ExZarr.create(
+  shape: {1000},
+  chunks: {100},
+  dtype: :int64,
+  filters: [{:shuffle, [elementsize: 8]}],
+  compressor: :zlib,
+  zarr_version: 3  # Request v3 format
+)
+
+# Automatically converts to v3 codec pipeline:
+# [
+#   %{name: "shuffle", configuration: %{elementsize: 8}},
+#   %{name: "bytes"},
+#   %{name: "gzip", configuration: %{level: 5}}
+# ]
+```
+
+For detailed migration guidance, see [docs/V2_TO_V3_MIGRATION.md](docs/V2_TO_V3_MIGRATION.md).
 
 ### Working with Groups
 
@@ -225,9 +316,9 @@ ExZarr includes three built-in storage backends:
 - **`:zip`** - Zip archive storage for compact single-file arrays (portable, easy to distribute)
 
 Arrays stored on the filesystem use the standard Zarr format:
-- Metadata stored in `.zarray` JSON files
-- Chunks stored as separate files with dot notation (e.g., `0.0`, `0.1`)
-- Groups marked with `.zgroup` JSON files
+- **v2 format**: Metadata in `.zarray` files, chunks as `0.0`, `0.1`, groups as `.zgroup`
+- **v3 format**: Metadata in `zarr.json` files, chunks in `c/` directory as `c/0/0`, `c/0/1`
+- Automatic format detection when opening existing arrays
 
 ### Using Zip Storage
 
@@ -468,7 +559,9 @@ ExZarr uses:
 - **Erlang :zlib** for compression and decompression
 - **GenServer** for array state management
 - **Pluggable storage backends** for memory and filesystem storage
-- **Zarr v2 specification** for interoperability with Python, Julia, and other Zarr implementations
+- **Zarr v2 and v3 specifications** for interoperability with Python, Julia, and other Zarr implementations
+- **Version-aware codec pipeline** that automatically routes between v2 and v3 implementations
+- **Automatic format detection** when opening existing arrays
 
 ## Development
 
@@ -534,11 +627,12 @@ ExZarr includes comprehensive test coverage:
 - **Unit tests** for individual modules and end-to-end workflows
 - **Property-based tests** using StreamData (21 properties, 2,100+ generated test cases)
 - **Python integration tests** verifying interoperability with zarr-python (14 tests)
+- **v3 integration tests** verifying Zarr v3 specification compliance (23 tests)
 - **Custom codec tests** verifying the codec plugin system (29 tests)
 - **Custom storage tests** verifying the storage backend plugin system (20 tests)
 - **Zip storage tests** verifying zip archive backend (6 tests)
 - **Filter tests** verifying transformation pipeline (36 tests)
-- **Total**: 300 tests + 21 properties
+- **Total**: 466 tests + 21 properties
 
 Key testing areas:
 - Compression and decompression invariants
@@ -550,6 +644,8 @@ Key testing areas:
 - Array creation and manipulation
 - Edge cases and boundary conditions
 - Zarr v2 specification compatibility with Python implementation
+- Zarr v3 specification compliance (unified codec pipeline, new metadata format)
+- v2/v3 interoperability and automatic version detection
 - Custom codec registration and runtime behavior
 - CRC32C checksum validation
 
@@ -583,16 +679,19 @@ Completed features:
 - Filter pipeline support (Delta, Quantize, Shuffle, FixedScaleOffset, AsType, BitRound)
 - Zip archive storage backend
 - Custom storage backend plugin system (for S3, databases, cloud storage, etc.)
+- Zarr v3 specification support with automatic version detection
+- Unified codec pipeline for v3 format
+- Full backward compatibility with v2 arrays
 
 Future improvements planned for ExZarr:
 
 - Additional filters (PackBits, Categorize - require string/boolean dtype support)
-- Zarr v3 specification support
 - Concurrent chunk reading and writing
 - Advanced array slicing and indexing operations
 - Distributed computing integration with Broadway or GenStage
 - Built-in S3 storage backend
 - Streaming API for large arrays
+- v3 storage transformers and sharding extension
 
 ## Contributing
 
@@ -611,4 +710,4 @@ MIT
 
 ## Credits
 
-Inspired by [zarr-python](https://github.com/zarr-developers/zarr-python). Implements the Zarr v2 specification for compatibility with the broader Zarr ecosystem.
+Inspired by [zarr-python](https://github.com/zarr-developers/zarr-python). Implements both Zarr v2 and v3 specifications for full compatibility with the broader Zarr ecosystem.

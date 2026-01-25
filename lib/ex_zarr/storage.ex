@@ -252,24 +252,36 @@ defmodule ExZarr.Storage do
   @doc """
   Reads metadata from storage.
 
-  Loads the `.zarray` metadata file for a Zarr array. For filesystem storage,
-  reads and parses the JSON file. Converts JSON data types back to internal
-  format (e.g., `"<f8"` to `:float64`).
+  Loads array metadata from storage. Automatically detects Zarr format version
+  (v2 or v3) and returns the appropriate metadata struct:
+  - v2: Loads `.zarray` file, returns `ExZarr.Metadata` struct
+  - v3: Loads `zarr.json` file, returns `ExZarr.MetadataV3` struct
+
+  Converts JSON data types back to internal format (e.g., `"<f8"` to `:float64`
+  for v2, or `"float64"` to `:float64` for v3).
 
   ## Examples
 
+      # Reading v2 array
       {:ok, metadata} = ExZarr.Storage.read_metadata(storage)
       metadata.shape    # => {1000, 1000}
       metadata.dtype    # => :float64
       metadata.compressor  # => :zlib
 
+      # Reading v3 array
+      {:ok, metadata} = ExZarr.Storage.read_metadata(storage)
+      metadata.shape    # => {1000, 1000}
+      metadata.data_type  # => "float64"
+      metadata.codecs   # => [%{name: "bytes"}, %{name: "gzip"}]
+
   ## Returns
 
-  - `{:ok, metadata}` with parsed Metadata struct
-  - `{:error, :metadata_not_found}` if .zarray file doesn't exist
+  - `{:ok, metadata}` with parsed Metadata struct (v2) or MetadataV3 struct (v3)
+  - `{:error, :metadata_not_found}` if metadata file doesn't exist
   - `{:error, reason}` for other failures
   """
-  @spec read_metadata(t()) :: {:ok, map()} | {:error, term()}
+  @spec read_metadata(t()) ::
+          {:ok, ExZarr.Metadata.t() | ExZarr.MetadataV3.t()} | {:error, term()}
   def read_metadata(%__MODULE__{backend: backend_id, state: backend_state}) do
     # Look up backend module and delegate
     case ExZarr.Storage.Registry.get(backend_id) do
@@ -292,43 +304,84 @@ defmodule ExZarr.Storage do
     end
   end
 
-  # Parse JSON metadata into Metadata struct
+  # Parse JSON metadata into Metadata struct (with version detection)
   defp parse_metadata_json(json) when is_binary(json) do
     case Jason.decode(json, keys: :atoms) do
       {:ok, metadata} ->
-        parsed_metadata = %ExZarr.Metadata{
-          shape: List.to_tuple(metadata.shape),
-          chunks: List.to_tuple(metadata.chunks),
-          dtype: string_to_dtype(metadata.dtype),
-          compressor: parse_compressor(metadata.compressor),
-          fill_value: metadata.fill_value,
-          order: Map.get(metadata, :order, "C"),
-          zarr_format: metadata.zarr_format,
-          filters: parse_filters(Map.get(metadata, :filters))
-        }
-
-        {:ok, parsed_metadata}
+        # Detect version and route to appropriate parser
+        case ExZarr.Version.detect_version(metadata) do
+          {:ok, 2} -> parse_metadata_v2(metadata)
+          {:ok, 3} -> parse_metadata_v3(metadata)
+          {:error, reason} -> {:error, reason}
+        end
 
       {:error, reason} ->
         {:error, reason}
     end
   end
 
+  # Parse v2 metadata
+  defp parse_metadata_v2(metadata) do
+    parsed_metadata = %ExZarr.Metadata{
+      shape: List.to_tuple(metadata.shape),
+      chunks: List.to_tuple(metadata.chunks),
+      dtype: string_to_dtype(metadata.dtype),
+      compressor: parse_compressor(metadata.compressor),
+      fill_value: metadata.fill_value,
+      order: Map.get(metadata, :order, "C"),
+      zarr_format: metadata.zarr_format,
+      filters: parse_filters(Map.get(metadata, :filters))
+    }
+
+    {:ok, parsed_metadata}
+  end
+
+  # Parse v3 metadata
+  defp parse_metadata_v3(metadata) do
+    parsed_metadata = %ExZarr.MetadataV3{
+      zarr_format: 3,
+      node_type: String.to_atom(Map.get(metadata, :node_type, "array")),
+      shape: if(metadata[:shape], do: List.to_tuple(metadata.shape), else: nil),
+      data_type: Map.get(metadata, :data_type),
+      chunk_grid: Map.get(metadata, :chunk_grid),
+      chunk_key_encoding: Map.get(metadata, :chunk_key_encoding),
+      codecs: parse_codecs_v3(Map.get(metadata, :codecs, [])),
+      fill_value: Map.get(metadata, :fill_value),
+      attributes: Map.get(metadata, :attributes, %{}),
+      dimension_names: Map.get(metadata, :dimension_names)
+    }
+
+    {:ok, parsed_metadata}
+  end
+
+  # Parse v3 codec specifications
+  defp parse_codecs_v3(codecs) when is_list(codecs) do
+    Enum.map(codecs, fn codec ->
+      %{
+        name: Map.get(codec, :name),
+        configuration: Map.get(codec, :configuration, %{})
+      }
+    end)
+  end
+
+  defp parse_codecs_v3(_), do: []
+
   @doc """
   Writes metadata to storage.
 
-  Saves array metadata to a `.zarray` JSON file following the Zarr v2
-  specification. Converts internal data types to JSON format (e.g.,
-  `:float64` to `"<f8"`).
+  Saves array metadata to storage. Automatically handles both Zarr v2 and v3 formats:
+  - v2: Saves to `.zarray` file, converts `:float64` to `"<f8"` format
+  - v3: Saves to `zarr.json` file, converts `:float64` to `"float64"` format
 
   ## Parameters
 
   - `storage` - Storage instance
-  - `metadata` - Metadata struct to write
+  - `metadata` - Metadata struct (v2) or MetadataV3 struct (v3) to write
   - `opts` - Options (currently unused)
 
   ## Examples
 
+      # Write v2 metadata
       metadata = %ExZarr.Metadata{
         shape: {1000, 1000},
         chunks: {100, 100},
@@ -340,28 +393,38 @@ defmodule ExZarr.Storage do
       }
       :ok = ExZarr.Storage.write_metadata(storage, metadata, [])
 
+      # Write v3 metadata
+      metadata = %ExZarr.MetadataV3{
+        zarr_format: 3,
+        node_type: :array,
+        shape: {1000, 1000},
+        data_type: "float64",
+        chunk_grid: %{name: "regular", configuration: %{chunk_shape: {100, 100}}},
+        chunk_key_encoding: %{name: "default"},
+        codecs: [%{name: "bytes"}, %{name: "gzip", configuration: %{level: 5}}],
+        fill_value: 0.0,
+        attributes: %{}
+      }
+      :ok = ExZarr.Storage.write_metadata(storage, metadata, [])
+
   ## Returns
 
   - `:ok` for filesystem storage
   - `{:ok, updated_storage}` for memory storage
   - `{:error, reason}` on failure
   """
-  @spec write_metadata(t(), ExZarr.Metadata.t(), keyword()) :: :ok | {:error, term()}
+  @spec write_metadata(t(), ExZarr.Metadata.t() | ExZarr.MetadataV3.t(), keyword()) ::
+          :ok | {:error, term()}
   def write_metadata(%__MODULE__{backend: backend_id, state: backend_state}, metadata, opts) do
     # Look up backend module and delegate
     case ExZarr.Storage.Registry.get(backend_id) do
       {:ok, backend_module} ->
-        # Convert Metadata struct to JSON
-        metadata_json = %{
-          zarr_format: 2,
-          shape: Tuple.to_list(metadata.shape),
-          chunks: Tuple.to_list(metadata.chunks),
-          dtype: dtype_to_string(metadata.dtype),
-          compressor: compressor_to_json(metadata.compressor),
-          fill_value: metadata.fill_value,
-          order: metadata.order,
-          filters: encode_filters(metadata.filters)
-        }
+        # Convert Metadata struct to JSON (version-aware)
+        metadata_json =
+          case metadata do
+            %ExZarr.Metadata{} -> encode_metadata_v2(metadata)
+            %ExZarr.MetadataV3{} -> encode_metadata_v3(metadata)
+          end
 
         with {:ok, json} <- Jason.encode(metadata_json, pretty: true) do
           backend_module.write_metadata(backend_state, json, opts)
@@ -371,6 +434,65 @@ defmodule ExZarr.Storage do
         {:error, {:unknown_backend, backend_id}}
     end
   end
+
+  # Encode v2 metadata to JSON map
+  defp encode_metadata_v2(metadata) do
+    %{
+      zarr_format: 2,
+      shape: Tuple.to_list(metadata.shape),
+      chunks: Tuple.to_list(metadata.chunks),
+      dtype: dtype_to_string(metadata.dtype),
+      compressor: compressor_to_json(metadata.compressor),
+      fill_value: metadata.fill_value,
+      order: metadata.order,
+      filters: encode_filters(metadata.filters)
+    }
+  end
+
+  # Encode v3 metadata to JSON map
+  defp encode_metadata_v3(metadata) do
+    base = %{
+      zarr_format: 3,
+      node_type: Atom.to_string(metadata.node_type),
+      attributes: metadata.attributes || %{}
+    }
+
+    # Add array-specific fields if this is an array
+    if metadata.node_type == :array do
+      Map.merge(base, %{
+        shape: Tuple.to_list(metadata.shape),
+        data_type: metadata.data_type,
+        chunk_grid: encode_chunk_grid(metadata.chunk_grid),
+        chunk_key_encoding: metadata.chunk_key_encoding || %{name: "default"},
+        codecs: encode_codecs_v3(metadata.codecs),
+        fill_value: metadata.fill_value,
+        dimension_names: metadata.dimension_names
+      })
+    else
+      base
+    end
+  end
+
+  # Convert chunk_grid to JSON-compatible format (tuples to lists)
+  defp encode_chunk_grid(%{name: name, configuration: %{chunk_shape: chunk_shape} = config}) do
+    %{
+      name: name,
+      configuration: Map.put(config, :chunk_shape, Tuple.to_list(chunk_shape))
+    }
+  end
+
+  defp encode_chunk_grid(chunk_grid), do: chunk_grid
+
+  # Encode v3 codec specifications to JSON format
+  defp encode_codecs_v3(codecs) when is_list(codecs) do
+    Enum.map(codecs, fn codec ->
+      # zarr-python 3.x requires 'configuration' key to always be present
+      config = Map.get(codec, :configuration, %{})
+      %{name: codec.name, configuration: config}
+    end)
+  end
+
+  defp encode_codecs_v3(_), do: []
 
   @doc """
   Lists all chunk keys in the storage.

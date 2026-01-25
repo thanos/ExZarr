@@ -48,7 +48,10 @@ defmodule ExZarr.Array do
   """
 
   use GenServer
-  alias ExZarr.{Codecs, Metadata, Storage}
+
+  alias ExZarr.{Codecs, DataType, Metadata, MetadataV3, Storage}
+  alias ExZarr.Codecs.PipelineV3
+  alias ExZarr.Codecs.Registry
 
   @impl GenServer
   def init(init_arg) do
@@ -62,7 +65,8 @@ defmodule ExZarr.Array do
           compressor: ExZarr.compressor(),
           fill_value: number() | nil,
           storage: Storage.t(),
-          metadata: Metadata.t()
+          metadata: Metadata.t() | MetadataV3.t(),
+          version: 2 | 3
         }
 
   defstruct [
@@ -72,7 +76,9 @@ defmodule ExZarr.Array do
     :compressor,
     :fill_value,
     :storage,
-    :metadata
+    :metadata,
+    # Default to v2 for backward compatibility
+    version: 2
   ]
 
   ## Public API
@@ -124,15 +130,28 @@ defmodule ExZarr.Array do
   """
   @spec create(keyword()) :: {:ok, t()} | {:error, term()}
   def create(opts) do
+    # Get version from opts (default to 2 for backward compatibility)
+    version = Keyword.get(opts, :zarr_version, 2)
+
     with {:ok, config} <- validate_config(opts),
          {:ok, storage} <- Storage.init(config),
-         {:ok, metadata} <- Metadata.create(config) do
+         {:ok, metadata} <- create_metadata(config, version) do
       array =
-        struct(__MODULE__, Map.put(config, :storage, storage) |> Map.put(:metadata, metadata))
+        struct(
+          __MODULE__,
+          config
+          |> Map.put(:storage, storage)
+          |> Map.put(:metadata, metadata)
+          |> Map.put(:version, version)
+        )
 
       {:ok, array}
     end
   end
+
+  # Create metadata based on version
+  defp create_metadata(config, 2), do: Metadata.create(config)
+  defp create_metadata(config, 3), do: MetadataV3.create(config)
 
   @doc """
   Opens an existing array from storage.
@@ -162,14 +181,30 @@ defmodule ExZarr.Array do
   def open(opts) do
     with {:ok, storage} <- Storage.open(opts),
          {:ok, metadata} <- Storage.read_metadata(storage) do
+      # Auto-detect version from metadata type
+      {version, chunks, dtype, compressor} =
+        case metadata do
+          %Metadata{} ->
+            # v2 metadata
+            {2, metadata.chunks, metadata.dtype, metadata.compressor}
+
+          %MetadataV3{} ->
+            # v3 metadata - extract chunks and dtype
+            {:ok, chunk_shape} = MetadataV3.get_chunk_shape(metadata)
+            dtype = ExZarr.DataType.from_v3(metadata.data_type)
+            # For v3, compressor is not a single field - set to :none for compatibility
+            {3, chunk_shape, dtype, :none}
+        end
+
       array = %__MODULE__{
         shape: metadata.shape,
-        chunks: metadata.chunks,
-        dtype: metadata.dtype,
-        compressor: metadata.compressor,
+        chunks: chunks,
+        dtype: dtype,
+        compressor: compressor,
         fill_value: metadata.fill_value,
         storage: storage,
-        metadata: metadata
+        metadata: metadata,
+        version: version
       }
 
       {:ok, array}
@@ -503,10 +538,8 @@ defmodule ExZarr.Array do
       |> Enum.map(fn index ->
         case Storage.read_chunk(array.storage, index) do
           {:ok, compressed_data} ->
-            # Decompress, then apply filters in REVERSE order
-            with {:ok, decompressed} <- Codecs.decompress(compressed_data, array.compressor) do
-              apply_filters_decode(decompressed, array.metadata.filters)
-            end
+            # Version-aware codec decoding
+            apply_codec_pipeline_decode(array, compressed_data)
 
           {:error, :not_found} ->
             {:ok, create_fill_chunk(array)}
@@ -528,9 +561,8 @@ defmodule ExZarr.Array do
     results =
       Enum.zip(chunks, indices)
       |> Enum.map(fn {chunk_data, index} ->
-        # Apply filters in FORWARD order, then compress
-        with {:ok, filtered} <- apply_filters_encode(chunk_data, array.metadata.filters),
-             {:ok, compressed} <- Codecs.compress(filtered, array.compressor) do
+        # Version-aware codec encoding
+        with {:ok, compressed} <- apply_codec_pipeline_encode(array, chunk_data) do
           Storage.write_chunk(array.storage, index, compressed)
         end
       end)
@@ -1198,6 +1230,39 @@ defmodule ExZarr.Array do
 
   # Filter pipeline helpers
 
+  # Version-aware codec pipeline functions
+  defp apply_codec_pipeline_decode(array, compressed_data) do
+    case array.version do
+      2 ->
+        # v2 path: decompress first, then apply filters in reverse order
+        with {:ok, decompressed} <- Codecs.decompress(compressed_data, array.compressor) do
+          apply_filters_decode(decompressed, array.metadata.filters)
+        end
+
+      3 ->
+        # v3 path: use unified codec pipeline
+        {:ok, pipeline} = PipelineV3.parse_codecs(array.metadata.codecs)
+        opts = [itemsize: ExZarr.DataType.itemsize(array.dtype), dtype: array.dtype]
+        PipelineV3.decode(compressed_data, pipeline, opts)
+    end
+  end
+
+  defp apply_codec_pipeline_encode(array, chunk_data) do
+    case array.version do
+      2 ->
+        # v2 path: apply filters in forward order, then compress
+        with {:ok, filtered} <- apply_filters_encode(chunk_data, array.metadata.filters) do
+          Codecs.compress(filtered, array.compressor)
+        end
+
+      3 ->
+        # v3 path: use unified codec pipeline
+        {:ok, pipeline} = PipelineV3.parse_codecs(array.metadata.codecs)
+        opts = [itemsize: DataType.itemsize(array.dtype), dtype: array.dtype]
+        PipelineV3.encode(chunk_data, pipeline, opts)
+    end
+  end
+
   defp apply_filters_decode(data, nil), do: {:ok, data}
   defp apply_filters_decode(data, []), do: {:ok, data}
 
@@ -1206,7 +1271,7 @@ defmodule ExZarr.Array do
     filters
     |> Enum.reverse()
     |> Enum.reduce_while({:ok, data}, fn {filter_id, opts}, {:ok, acc_data} ->
-      case ExZarr.Codecs.Registry.get(filter_id) do
+      case Codecs.Registry.get(filter_id) do
         {:ok, :builtin_delta} ->
           case decode_builtin_filter(acc_data, :delta, opts) do
             {:ok, decoded} -> {:cont, {:ok, decoded}}
@@ -1277,7 +1342,7 @@ defmodule ExZarr.Array do
   defp apply_filters_encode(data, filters) when is_list(filters) do
     # Forward order for encoding
     Enum.reduce_while(filters, {:ok, data}, fn {filter_id, opts}, {:ok, acc_data} ->
-      case ExZarr.Codecs.Registry.get(filter_id) do
+      case Registry.get(filter_id) do
         {:ok, :builtin_delta} ->
           case encode_builtin_filter(acc_data, :delta, opts) do
             {:ok, encoded} -> {:cont, {:ok, encoded}}

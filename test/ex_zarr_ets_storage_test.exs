@@ -749,14 +749,4 @@ defmodule ExZarr.ETSStorageTest do
       ETSBackend.delete_table(table_name)
     end
   end
-
-  ## Helper Functions
-
-  # Make table_exists? available in tests
-  defp table_exists?(table) do
-    case :ets.info(table) do
-      :undefined -> false
-      _ -> true
-    end
-  end
 end

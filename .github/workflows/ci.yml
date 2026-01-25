@@ -69,6 +69,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ matrix.otp }}-
 
+      - name: Cache Zig
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/zig
+          key: ${{ runner.os }}-zig-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-zig-
+
       - name: Install dependencies
         run: mix deps.get
 
@@ -208,4 +216,4 @@ jobs:
       - name: Check documentation coverage
         run: |
           echo "Checking for undocumented public functions..."
-          mix docs 2>&1 | grep -i "warning" && exit 1 || exit 0
+          mix docs --warnings-as-errors
