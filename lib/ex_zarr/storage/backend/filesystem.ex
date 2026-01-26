@@ -134,9 +134,20 @@ defmodule ExZarr.Storage.Backend.Filesystem do
 
     with :ok <- ensure_directory(chunk_dir) do
       if Map.get(state, :use_file_locks, true) do
-        # Use file locking for atomic writes
+        # Use file locking for atomic writes with fsync
         case FileLock.with_write_lock(chunk_path, [timeout: 5000], fn ->
-               File.write(chunk_path, data)
+               with :ok <- File.write(chunk_path, data) do
+                 # Ensure data is fully written to disk before releasing lock
+                 case :file.open(chunk_path, [:read, :raw]) do
+                   {:ok, fd} ->
+                     _ = :file.sync(fd)
+                     _ = :file.close(fd)
+                     :ok
+
+                   {:error, reason} ->
+                     {:error, reason}
+                 end
+               end
              end) do
           {:ok, :ok} -> :ok
           {:ok, {:error, reason}} -> {:error, reason}

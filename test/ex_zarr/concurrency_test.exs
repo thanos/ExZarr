@@ -331,23 +331,23 @@ defmodule ExZarr.ConcurrencyTest do
                     row = :rand.uniform(40)
                     col = :rand.uniform(40)
 
-                    {:ok, _data} =
-                      Array.get_slice(array, start: {row, col}, stop: {row + 10, col + 10})
-
-                    :read
+                    case Array.get_slice(array, start: {row, col}, stop: {row + 10, col + 10}) do
+                      {:ok, _data} -> {:ok, :read}
+                      {:error, reason} -> {:error, {:read_failed, reason}}
+                    end
 
                   :write ->
                     row = :rand.uniform(4) * 10
                     col = :rand.uniform(4) * 10
                     data = for j <- 0..99, into: <<>>, do: <<i * 1000 + j::32-little>>
 
-                    :ok =
-                      Array.set_slice(array, data,
-                        start: {row, col},
-                        stop: {row + 10, col + 10}
-                      )
-
-                    :write
+                    case Array.set_slice(array, data,
+                           start: {row, col},
+                           stop: {row + 10, col + 10}
+                         ) do
+                      :ok -> {:ok, :write}
+                      {:error, reason} -> {:error, {:write_failed, reason}}
+                    end
                 end
               end
 
@@ -364,6 +364,20 @@ defmodule ExZarr.ConcurrencyTest do
       Enum.each(results, fn {_pid, ops} ->
         assert length(ops) == 10
       end)
+
+      # Count successes and failures
+      all_ops =
+        results
+        |> Enum.flat_map(fn {_pid, ops} -> ops end)
+
+      successes = Enum.count(all_ops, fn op -> match?({:ok, _}, op) end)
+      failures = Enum.count(all_ops, fn op -> match?({:error, _}, op) end)
+
+      # At least 90% of operations should succeed under extreme concurrency
+      success_rate = successes / (successes + failures) * 100
+
+      assert success_rate >= 90.0,
+             "Success rate (#{Float.round(success_rate, 1)}%) should be at least 90%, got #{failures} failures out of #{successes + failures} operations"
     end
   end
 
