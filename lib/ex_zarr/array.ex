@@ -2018,6 +2018,227 @@ defmodule ExZarr.Array do
     end
   end
 
+  @doc """
+  Streams chunks lazily as `{chunk_index, data}` tuples.
+
+  Returns a Stream that yields chunks on-demand, enabling memory-efficient
+  iteration over large arrays without loading all chunks at once.
+
+  ## Options
+
+    * `:parallel` - Number of concurrent chunk reads (default: 1, max: 10)
+    * `:ordered` - Maintain chunk order in output (default: true)
+    * `:progress_callback` - Function called with `(done, total)` progress updates
+    * `:filter` - Function to filter which chunks to include
+
+  ## Examples
+
+      # Sequential streaming
+      Array.chunk_stream(array)
+      |> Stream.each(fn {index, data} -> process_chunk(index, data) end)
+      |> Stream.run()
+
+      # Parallel processing with progress
+      Array.chunk_stream(array,
+        parallel: 4,
+        progress_callback: fn done, total ->
+          Logger.info("Progress: \#{done}/\#{total}")
+        end
+      )
+      |> Enum.to_list()
+
+      # Filter specific chunks
+      Array.chunk_stream(array,
+        filter: fn {x, y} -> x > 10 and y < 20 end
+      )
+
+  ## Performance
+
+  Memory usage is constant regardless of the number of chunks. For large arrays,
+  use parallel mode to improve throughput, especially with cloud storage backends.
+  """
+  @spec chunk_stream(t(), keyword()) :: Enumerable.t()
+  def chunk_stream(array, opts \\ []) do
+    parallel = min(Keyword.get(opts, :parallel, 1), 10)
+    ordered = Keyword.get(opts, :ordered, true)
+    progress_callback = Keyword.get(opts, :progress_callback, nil)
+    filter = Keyword.get(opts, :filter, nil)
+
+    # Get list of all chunks that exist in storage
+    chunk_indices =
+      case Storage.list_chunks(array.storage) do
+        {:ok, indices} -> indices
+        {:error, _} -> []
+      end
+
+    # Apply filter if provided
+    filtered_indices =
+      if filter do
+        Enum.filter(chunk_indices, filter)
+      else
+        chunk_indices
+      end
+
+    total = length(filtered_indices)
+
+    if parallel > 1 do
+      # Parallel mode using Task.async_stream
+      filtered_indices
+      |> Task.async_stream(
+        fn chunk_index ->
+          case stream_read_chunk(array, chunk_index) do
+            {:ok, data} -> {chunk_index, data}
+            {:error, _reason} -> nil
+          end
+        end,
+        max_concurrency: parallel,
+        ordered: ordered,
+        timeout: 60_000
+      )
+      |> Stream.with_index(1)
+      |> Stream.map(fn {{:ok, result}, index} ->
+        notify_progress(progress_callback, index, total)
+        result
+      end)
+      |> Stream.reject(&is_nil/1)
+    else
+      # Sequential mode using Stream.resource
+      Stream.resource(
+        fn -> {filtered_indices, 0} end,
+        fn
+          {[], done} ->
+            {:halt, {[], done}}
+
+          {[chunk_index | rest], done} ->
+            case stream_read_chunk(array, chunk_index) do
+              {:ok, data} ->
+                new_done = done + 1
+                notify_progress(progress_callback, new_done, total)
+                {[{chunk_index, data}], {rest, new_done}}
+
+              {:error, _reason} ->
+                # Skip this chunk and continue
+                {[], {rest, done}}
+            end
+        end,
+        fn _state -> :ok end
+      )
+    end
+  end
+
+  @doc """
+  Processes chunks in parallel using a mapper function.
+
+  This is a convenience wrapper around `chunk_stream/2` that applies a transformation
+  to each chunk in parallel and collects the results.
+
+  ## Options
+
+    * `:max_concurrency` - Maximum parallel tasks (default: System.schedulers_online())
+    * `:timeout` - Timeout per chunk in ms (default: 30_000)
+    * `:on_timeout` - `:kill_task` or `:exit` (default: :kill_task)
+    * `:ordered` - Maintain order (default: true)
+
+  ## Examples
+
+      # Transform all chunks
+      Array.parallel_chunk_map(array, fn {index, data} ->
+        # Process chunk data
+        transform(data)
+      end)
+      |> Enum.to_list()
+
+      # With custom concurrency
+      Array.parallel_chunk_map(array, &process_chunk/1,
+        max_concurrency: 8,
+        timeout: 60_000
+      )
+  """
+  @spec parallel_chunk_map(t(), ({tuple(), binary()} -> term()), keyword()) :: Enumerable.t()
+  def parallel_chunk_map(array, mapper_fn, opts \\ []) do
+    max_concurrency = Keyword.get(opts, :max_concurrency, System.schedulers_online())
+    timeout = Keyword.get(opts, :timeout, 30_000)
+    on_timeout = Keyword.get(opts, :on_timeout, :kill_task)
+    ordered = Keyword.get(opts, :ordered, true)
+
+    array
+    |> chunk_stream(parallel: 1)
+    |> Task.async_stream(mapper_fn,
+      max_concurrency: max_concurrency,
+      timeout: timeout,
+      on_timeout: on_timeout,
+      ordered: ordered
+    )
+    |> Stream.map(fn
+      {:ok, result} -> result
+      {:exit, reason} -> {:error, {:exit, reason}}
+    end)
+  end
+
+  # Private helper to read a single chunk with lock/cache management
+  defp stream_read_chunk(array, chunk_index) do
+    # Check cache first
+    cached_data =
+      if array.cache_enabled do
+        ExZarr.ChunkCache.get(array.storage.state.path, chunk_index)
+      else
+        nil
+      end
+
+    case cached_data do
+      {:ok, data} ->
+        # Cache hit
+        {:ok, data}
+
+      _ ->
+        # Cache miss - need to read from storage
+        try do
+          # Acquire read lock if ArrayServer is running
+          _ =
+            if array.server_pid do
+              ExZarr.ArrayServer.lock_chunk(array.server_pid, chunk_index, :read)
+            end
+
+          # Read and decode chunk
+          case Storage.read_chunk(array.storage, chunk_index) do
+            {:ok, compressed_data} ->
+              case apply_codec_pipeline_decode(array, compressed_data) do
+                {:ok, decompressed_data} ->
+                  # Update cache if enabled
+                  if array.cache_enabled do
+                    cache_key = build_cache_key(array, chunk_index)
+                    ExZarr.ChunkCache.put(cache_key, decompressed_data)
+                  end
+
+                  {:ok, decompressed_data}
+
+                {:error, reason} ->
+                  {:error, reason}
+              end
+
+            {:error, :not_found} ->
+              # Chunk doesn't exist, return fill chunk
+              {:ok, create_fill_chunk(array)}
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+        after
+          # Always release lock
+          if array.server_pid do
+            ExZarr.ArrayServer.unlock_chunk(array.server_pid, chunk_index)
+          end
+        end
+    end
+  end
+
+  # Private helper for progress notifications
+  defp notify_progress(callback, done, total) when is_function(callback, 2) do
+    callback.(done, total)
+  end
+
+  defp notify_progress(_callback, _done, _total), do: :ok
+
   defp read_chunks_with_sharding(array, chunk_indices) do
     # Get sharding codec configuration
     sharding_codec = get_sharding_codec(array)

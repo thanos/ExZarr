@@ -279,28 +279,24 @@ defmodule ExZarr.Storage.Backend.S3 do
     config
   end
 
-  defp build_chunk_key("", chunk_index) do
-    chunk_index
-    |> Tuple.to_list()
-    |> Enum.join(".")
-  end
+  defp build_chunk_key(prefix, chunk_index, version \\ 2) do
+    chunk_name = ExZarr.ChunkKey.encode(chunk_index, version)
 
-  defp build_chunk_key(prefix, chunk_index) do
-    chunk_name =
-      chunk_index
-      |> Tuple.to_list()
-      |> Enum.join(".")
-
-    "#{prefix}/#{chunk_name}"
+    if prefix == "" do
+      chunk_name
+    else
+      Path.join(prefix, chunk_name)
+    end
   end
 
   defp build_metadata_key(""), do: ".zarray"
   defp build_metadata_key(prefix), do: "#{prefix}/.zarray"
 
   defp chunk_key?(key) do
-    # Chunk keys are numeric with dots: 0, 0.0, 0.1.2, etc.
+    # Use ChunkKey pattern matching for v2 format (default for S3)
     basename = Path.basename(key)
-    String.match?(basename, ~r/^\d+(\.\d+)*$/)
+    pattern = ExZarr.ChunkKey.chunk_key_pattern(2)
+    String.match?(basename, pattern)
   end
 
   defp parse_chunk_key(key, "") do

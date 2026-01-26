@@ -16,7 +16,9 @@ defmodule ExZarr.Application do
       # Codec registry for managing built-in and custom codecs
       {ExZarr.Codecs.Registry, []},
       # Storage backend registry for managing built-in and custom storage backends
-      {ExZarr.Storage.Registry, []}
+      {ExZarr.Storage.Registry, []},
+      # Chunk key encoder registry for managing custom chunk key encoders
+      {ExZarr.ChunkKey.Registry, []}
     ]
 
     opts = [strategy: :one_for_one, name: ExZarr.Supervisor]

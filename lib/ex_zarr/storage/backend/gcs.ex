@@ -371,27 +371,24 @@ defmodule ExZarr.Storage.Backend.GCS do
     end
   end
 
-  defp build_object_name("", chunk_index) do
-    chunk_index
-    |> Tuple.to_list()
-    |> Enum.join(".")
-  end
+  defp build_object_name(prefix, chunk_index, version \\ 2) do
+    chunk_name = ExZarr.ChunkKey.encode(chunk_index, version)
 
-  defp build_object_name(prefix, chunk_index) do
-    chunk_name =
-      chunk_index
-      |> Tuple.to_list()
-      |> Enum.join(".")
-
-    "#{prefix}/#{chunk_name}"
+    if prefix == "" do
+      chunk_name
+    else
+      Path.join(prefix, chunk_name)
+    end
   end
 
   defp build_metadata_name(""), do: ".zarray"
   defp build_metadata_name(prefix), do: "#{prefix}/.zarray"
 
   defp chunk_name?(name) do
+    # Use ChunkKey pattern matching for v2 format (default for GCS)
     basename = Path.basename(name)
-    String.match?(basename, ~r/^\d+(\.\d+)*$/)
+    pattern = ExZarr.ChunkKey.chunk_key_pattern(2)
+    String.match?(basename, pattern)
   end
 
   defp parse_object_name(name, "") do
