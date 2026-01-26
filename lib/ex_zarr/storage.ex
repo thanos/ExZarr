@@ -586,6 +586,10 @@ defmodule ExZarr.Storage do
   defp string_to_dtype("<u8"), do: :uint64
   defp string_to_dtype("<f4"), do: :float32
   defp string_to_dtype("<f8"), do: :float64
+  defp string_to_dtype("<c8"), do: :complex64
+  defp string_to_dtype("<c16"), do: :complex128
+  defp string_to_dtype("<M8"), do: :datetime64
+  defp string_to_dtype("<m8"), do: :timedelta64
   # Big-endian (> prefix)
   defp string_to_dtype(">i1"), do: :int8
   defp string_to_dtype(">i2"), do: :int16
@@ -597,6 +601,10 @@ defmodule ExZarr.Storage do
   defp string_to_dtype(">u8"), do: :uint64
   defp string_to_dtype(">f4"), do: :float32
   defp string_to_dtype(">f8"), do: :float64
+  defp string_to_dtype(">c8"), do: :complex64
+  defp string_to_dtype(">c16"), do: :complex128
+  defp string_to_dtype(">M8"), do: :datetime64
+  defp string_to_dtype(">m8"), do: :timedelta64
   # Native/platform byte order (| prefix)
   defp string_to_dtype("|i1"), do: :int8
   defp string_to_dtype("|i2"), do: :int16
@@ -608,6 +616,7 @@ defmodule ExZarr.Storage do
   defp string_to_dtype("|u8"), do: :uint64
   defp string_to_dtype("|f4"), do: :float32
   defp string_to_dtype("|f8"), do: :float64
+  defp string_to_dtype("|b1"), do: :bool
   # Fallback for unknown formats
   defp string_to_dtype(dtype_str), do: String.to_atom(dtype_str)
 
@@ -621,6 +630,11 @@ defmodule ExZarr.Storage do
   defp dtype_to_string(:uint64), do: "<u8"
   defp dtype_to_string(:float32), do: "<f4"
   defp dtype_to_string(:float64), do: "<f8"
+  defp dtype_to_string(:bool), do: "|b1"
+  defp dtype_to_string(:complex64), do: "<c8"
+  defp dtype_to_string(:complex128), do: "<c16"
+  defp dtype_to_string(:datetime64), do: "<M8"
+  defp dtype_to_string(:timedelta64), do: "<m8"
 
   # Filter serialization helpers
 
