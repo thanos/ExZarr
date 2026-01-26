@@ -21,7 +21,7 @@ Add `ex_zarr` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_zarr, "~> 0.4.0"}
+    {:ex_zarr, "~> 1.0"}
   ]
 end
 ```
@@ -669,6 +669,94 @@ These tests verify that:
 - Compression (zlib) works correctly across implementations
 
 **Requirements**: Python 3.6+, zarr-python 2.x, numpy
+
+## Documentation
+
+### Guides
+
+Comprehensive guides for all skill levels:
+
+- **[Getting Started](guides/getting_started.md)** - New to ExZarr? Start here!
+  - Installation and basic concepts
+  - Creating and opening arrays
+  - Reading and writing data
+  - Choosing chunk sizes
+  - Common patterns and best practices
+
+- **[Advanced Usage](guides/advanced_usage.md)** - Deep dive into advanced features
+  - Zarr v3 features (sharding, dimension names, codec pipeline)
+  - Custom chunk grids (regular and irregular)
+  - Cloud storage optimization (S3, GCS, Azure)
+  - Performance tuning and profiling
+  - Custom storage backends and codecs
+
+- **[Migration from Python](guides/migration_from_python.md)** - For zarr-python users
+  - API comparison and translation guide
+  - Data structure differences (NumPy arrays vs nested tuples)
+  - Converting between Python and Elixir
+  - Interoperability examples
+  - Common patterns and idioms
+
+### Examples
+
+Practical examples demonstrating real-world usage:
+
+- **[Climate Data Processing](examples/climate_data.exs)** - Complete workflow for climate data
+  - Multi-dimensional arrays with dimension names
+  - Time-series data storage and analysis
+  - Regional and temporal queries
+  - Statistical computations
+  - Compression and storage efficiency
+
+- **[Sharded Cloud Storage](examples/sharded_cloud_storage.exs)** - Optimizing for S3/cloud storage
+  - Comparing sharded vs non-sharded storage
+  - Minimizing API calls and costs
+  - Performance measurements
+  - Configuration best practices
+  - Cost analysis
+
+- **[Dimension Names](examples/dimension_names.exs)** - Named dimension slicing
+  - Creating arrays with semantic dimension labels
+  - Intuitive slicing by name instead of index
+  - Real-world examples (climate, medical imaging)
+  - Validation and best practices
+
+- **[Nx Integration](examples/nx_integration.exs)** - Numerical computing with Nx
+  - Converting between Nx tensors and Zarr arrays
+  - Machine learning workflows
+  - Streaming large arrays
+  - Performance optimization
+  - Batch processing
+
+- **[Python Interoperability](examples/python_interop_demo.exs)** - Working with Python zarr
+  - Reading Python-created arrays
+  - Writing arrays for Python consumption
+  - Data format compatibility
+
+- **[S3 Storage](examples/s3_storage.exs)** - Using Amazon S3 as storage backend
+  - S3 configuration and authentication
+  - Creating and accessing S3-backed arrays
+  - Performance optimization for cloud storage
+
+- **[Custom Codec](examples/custom_codec_example.exs)** - Creating custom codecs
+  - Implementing transformation and compression codecs
+  - Registering codecs at runtime
+  - Codec chaining and configuration
+
+### API Documentation
+
+Full API documentation is available at [hexdocs.pm/ex_zarr](https://hexdocs.pm/ex_zarr).
+
+Key modules:
+
+- **`ExZarr`** - Main API for creating and opening arrays
+- **`ExZarr.Array`** - Array operations (reading, writing, slicing)
+- **`ExZarr.Group`** - Hierarchical organization of arrays
+- **`ExZarr.Metadata`** - Zarr v2 metadata handling
+- **`ExZarr.MetadataV3`** - Zarr v3 metadata handling
+- **`ExZarr.Storage.Backend`** - Storage backend behavior
+- **`ExZarr.Codecs.Codec`** - Codec behavior for custom transformations
+- **`ExZarr.ChunkGrid`** - Chunk grid configuration
 
 ## Roadmap
 

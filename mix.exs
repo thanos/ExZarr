@@ -122,7 +122,10 @@ defmodule ExZarr.MixProject do
         "README.md",
         "CHANGELOG.md",
         "INTEROPERABILITY.md",
-        "docs/V2_TO_V3_MIGRATION.md"
+        "docs/V2_TO_V3_MIGRATION.md",
+        "guides/getting_started.md",
+        "guides/advanced_usage.md",
+        "guides/migration_from_python.md"
       ],
       groups_for_extras: [
         Guides: ~r/INTEROPERABILITY/,
