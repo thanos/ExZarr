@@ -69,7 +69,9 @@ defmodule ExZarr.Array do
           metadata: Metadata.t() | MetadataV3.t(),
           version: 2 | 3,
           chunk_grid_module: module() | nil,
-          chunk_grid_state: struct() | nil
+          chunk_grid_state: struct() | nil,
+          server_pid: pid() | nil,
+          cache_enabled: boolean()
         }
 
   defstruct [
@@ -84,7 +86,10 @@ defmodule ExZarr.Array do
     version: 2,
     # Optional chunk grid support for irregular chunking
     chunk_grid_module: nil,
-    chunk_grid_state: nil
+    chunk_grid_state: nil,
+    # Concurrency support
+    server_pid: nil,
+    cache_enabled: false
   ]
 
   ## Public API
@@ -104,6 +109,8 @@ defmodule ExZarr.Array do
   - `:storage` - Storage backend (default: `:memory`)
   - `:path` - Path for filesystem storage
   - `:fill_value` - Fill value for uninitialized chunks (default: `0`)
+  - `:enable_server` - Start ArrayServer for coordinated access (default: `false`)
+  - `:enable_cache` - Enable chunk caching (default: `false`)
 
   ## Examples
 
@@ -136,22 +143,78 @@ defmodule ExZarr.Array do
   """
   @spec create(keyword()) :: {:ok, t()} | {:error, term()}
   def create(opts) do
+    require Logger
+
     # Get version from opts (default to 2 for backward compatibility)
     version = Keyword.get(opts, :zarr_version, 2)
+    enable_server = Keyword.get(opts, :enable_server, false)
+    enable_cache = Keyword.get(opts, :enable_cache, false)
 
     with {:ok, config} <- validate_config(opts),
          {:ok, storage} <- Storage.init(config),
          {:ok, metadata} <- create_metadata(config, version) do
-      array =
+      # Build base array
+      base_array =
         struct(
           __MODULE__,
           config
           |> Map.put(:storage, storage)
           |> Map.put(:metadata, metadata)
           |> Map.put(:version, version)
+          |> Map.put(:cache_enabled, enable_cache)
         )
 
-      {:ok, array}
+      # Optionally start ChunkCache if not already running
+      if enable_cache and not cache_available?() do
+        case ExZarr.ChunkCache.start_link(max_size: 1000) do
+          {:ok, _pid} ->
+            Logger.debug("Started ChunkCache")
+            :ok
+
+          {:error, {:already_started, _pid}} ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning("Failed to start ChunkCache: #{inspect(reason)}")
+        end
+      end
+
+      # Optionally start ArrayServer for coordinated access
+      array =
+        if enable_server do
+          array_id = generate_array_id(base_array)
+
+          case ExZarr.ArrayServer.start_link(array_id: array_id) do
+            {:ok, pid} ->
+              Logger.debug(
+                "Started ArrayServer with pid=#{inspect(pid)} for array_id=#{array_id}"
+              )
+
+              %{base_array | server_pid: pid}
+
+            {:error, reason} ->
+              Logger.warning("Failed to start ArrayServer: #{inspect(reason)}")
+              base_array
+          end
+        else
+          base_array
+        end
+
+      # Automatically save metadata for filesystem storage
+      # This ensures .zarray or zarr.json file exists when Array.open is called
+      if storage.backend == :filesystem do
+        case Storage.write_metadata(storage, metadata, []) do
+          :ok ->
+            Logger.debug("Saved metadata to filesystem")
+            {:ok, array}
+
+          {:error, reason} ->
+            Logger.warning("Failed to save metadata: #{inspect(reason)}")
+            {:ok, array}
+        end
+      else
+        {:ok, array}
+      end
     end
   end
 
@@ -1718,6 +1781,60 @@ defmodule ExZarr.Array do
 
   ## Private Functions
 
+  # Generates a unique ID for the array (used for ArrayServer)
+  defp generate_array_id(array) do
+    # Use storage path if available, otherwise generate based on shape and dtype
+    case array.storage do
+      %{path: path} when is_binary(path) -> path
+      _ -> "array_#{inspect(array.shape)}_#{array.dtype}_#{System.unique_integer([:positive])}"
+    end
+  end
+
+  # Build cache key for a chunk
+  defp build_cache_key(array, chunk_index) do
+    array_id = generate_array_id(array)
+    {array_id, chunk_index}
+  end
+
+  # Check cache for multiple chunks, return {cached_map, uncached_indices}
+  defp check_cache_for_chunks(array, chunk_indices) do
+    if not array.cache_enabled or not cache_available?() do
+      {%{}, chunk_indices}
+    else
+      {cached, uncached} =
+        Enum.reduce(chunk_indices, {%{}, []}, fn index, {cached_acc, uncached_acc} ->
+          cache_key = build_cache_key(array, index)
+
+          case ExZarr.ChunkCache.get(cache_key) do
+            {:ok, data} ->
+              {Map.put(cached_acc, index, {:ok, data}), uncached_acc}
+
+            :not_found ->
+              {cached_acc, [index | uncached_acc]}
+          end
+        end)
+
+      {cached, Enum.reverse(uncached)}
+    end
+  end
+
+  # Check if ChunkCache GenServer is available
+  defp cache_available? do
+    Process.whereis(ExZarr.ChunkCache) != nil
+  end
+
+  # Invalidate cache entries for chunks
+  defp invalidate_cache_for_chunks(array, chunk_indices) do
+    if array.cache_enabled and cache_available?() do
+      Enum.each(chunk_indices, fn index ->
+        cache_key = build_cache_key(array, index)
+        ExZarr.ChunkCache.invalidate(cache_key)
+      end)
+    end
+
+    :ok
+  end
+
   defp validate_config(opts) do
     with {:ok, shape} <- validate_shape(opts[:shape]),
          {:ok, chunks} <- validate_chunks(opts[:chunks], shape) do
@@ -1813,27 +1930,91 @@ defmodule ExZarr.Array do
   end
 
   defp read_chunks_without_sharding(array, chunk_indices) do
-    chunks =
-      chunk_indices
-      |> Enum.map(fn index ->
-        case Storage.read_chunk(array.storage, index) do
-          {:ok, compressed_data} ->
-            # Version-aware codec decoding
-            apply_codec_pipeline_decode(array, compressed_data)
+    require Logger
 
-          {:error, :not_found} ->
-            {:ok, create_fill_chunk(array)}
+    # Try to get chunks from cache first if caching is enabled
+    {cached_chunks, uncached_indices} =
+      if array.cache_enabled do
+        check_cache_for_chunks(array, chunk_indices)
+      else
+        {%{}, chunk_indices}
+      end
+
+    # Acquire read locks if ArrayServer is present
+    if array.server_pid do
+      Enum.each(uncached_indices, fn index ->
+        case ExZarr.ArrayServer.lock_chunk(array.server_pid, index, :read) do
+          :ok ->
+            Logger.debug("Acquired read lock on chunk #{inspect(index)}")
+
+          {:error, reason} ->
+            Logger.warning(
+              "Failed to acquire read lock on chunk #{inspect(index)}: #{inspect(reason)}"
+            )
         end
       end)
-      |> Enum.map(fn
-        {:ok, data} -> data
-        {:error, reason} -> {:error, reason}
-      end)
+    end
 
-    if Enum.any?(chunks, &match?({:error, _}, &1)) do
-      {:error, :read_failed}
-    else
-      {:ok, chunks}
+    try do
+      # Read uncached chunks from storage
+      read_results =
+        uncached_indices
+        |> Enum.map(fn index ->
+          case Storage.read_chunk(array.storage, index) do
+            {:ok, compressed_data} ->
+              # Version-aware codec decoding
+              case apply_codec_pipeline_decode(array, compressed_data) do
+                {:ok, data} ->
+                  # Update cache if enabled
+                  if array.cache_enabled do
+                    cache_key = build_cache_key(array, index)
+                    ExZarr.ChunkCache.put(cache_key, data)
+                  end
+
+                  {index, {:ok, data}}
+
+                error ->
+                  {index, error}
+              end
+
+            {:error, :not_found} ->
+              fill_chunk = create_fill_chunk(array)
+              {index, {:ok, fill_chunk}}
+          end
+        end)
+        |> Map.new()
+
+      # Combine cached and newly read chunks in original order
+      chunks =
+        chunk_indices
+        |> Enum.map(fn index ->
+          case Map.get(cached_chunks, index) || Map.get(read_results, index) do
+            {:ok, data} -> data
+            {:error, reason} -> {:error, reason}
+            nil -> {:error, :chunk_missing}
+          end
+        end)
+
+      if Enum.any?(chunks, &match?({:error, _}, &1)) do
+        {:error, :read_failed}
+      else
+        {:ok, chunks}
+      end
+    after
+      # Release locks
+      if array.server_pid do
+        Enum.each(uncached_indices, fn index ->
+          case ExZarr.ArrayServer.unlock_chunk(array.server_pid, index) do
+            :ok ->
+              Logger.debug("Released read lock on chunk #{inspect(index)}")
+
+            {:error, reason} ->
+              Logger.warning(
+                "Failed to release read lock on chunk #{inspect(index)}: #{inspect(reason)}"
+              )
+          end
+        end)
+      end
     end
   end
 
@@ -1895,19 +2076,56 @@ defmodule ExZarr.Array do
   end
 
   defp write_chunks_without_sharding(array, chunks, indices) do
-    results =
-      Enum.zip(chunks, indices)
-      |> Enum.map(fn {chunk_data, index} ->
-        # Version-aware codec encoding
-        with {:ok, compressed} <- apply_codec_pipeline_encode(array, chunk_data) do
-          Storage.write_chunk(array.storage, index, compressed)
+    require Logger
+
+    # Invalidate cache for these chunks if caching is enabled
+    invalidate_cache_for_chunks(array, indices)
+
+    # Acquire write locks if ArrayServer is present
+    if array.server_pid do
+      Enum.each(indices, fn index ->
+        case ExZarr.ArrayServer.lock_chunk(array.server_pid, index, :write) do
+          :ok ->
+            Logger.debug("Acquired write lock on chunk #{inspect(index)}")
+
+          {:error, reason} ->
+            Logger.warning(
+              "Failed to acquire write lock on chunk #{inspect(index)}: #{inspect(reason)}"
+            )
         end
       end)
+    end
 
-    if Enum.all?(results, &(&1 == :ok)) do
-      :ok
-    else
-      {:error, :write_failed}
+    try do
+      results =
+        Enum.zip(chunks, indices)
+        |> Enum.map(fn {chunk_data, index} ->
+          # Version-aware codec encoding
+          with {:ok, compressed} <- apply_codec_pipeline_encode(array, chunk_data) do
+            Storage.write_chunk(array.storage, index, compressed)
+          end
+        end)
+
+      if Enum.all?(results, &(&1 == :ok)) do
+        :ok
+      else
+        {:error, :write_failed}
+      end
+    after
+      # Release locks
+      if array.server_pid do
+        Enum.each(indices, fn index ->
+          case ExZarr.ArrayServer.unlock_chunk(array.server_pid, index) do
+            :ok ->
+              Logger.debug("Released write lock on chunk #{inspect(index)}")
+
+            {:error, reason} ->
+              Logger.warning(
+                "Failed to release write lock on chunk #{inspect(index)}: #{inspect(reason)}"
+              )
+          end
+        end)
+      end
     end
   end
 

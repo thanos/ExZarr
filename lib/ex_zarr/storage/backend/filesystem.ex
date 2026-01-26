@@ -50,6 +50,8 @@ defmodule ExZarr.Storage.Backend.Filesystem do
   ```
   """
 
+  alias ExZarr.Storage.FileLock
+
   @behaviour ExZarr.Storage.Backend
 
   @impl true
@@ -59,8 +61,10 @@ defmodule ExZarr.Storage.Backend.Filesystem do
   def init(config) do
     case Keyword.fetch(config, :path) do
       {:ok, path} when is_binary(path) ->
+        use_file_locks = Keyword.get(config, :use_file_locks, true)
+
         with :ok <- ensure_directory(path) do
-          {:ok, %{path: path}}
+          {:ok, %{path: path, use_file_locks: use_file_locks}}
         end
 
       {:ok, nil} ->
@@ -78,8 +82,10 @@ defmodule ExZarr.Storage.Backend.Filesystem do
   def open(config) do
     case Keyword.fetch(config, :path) do
       {:ok, path} when is_binary(path) ->
+        use_file_locks = Keyword.get(config, :use_file_locks, true)
+
         if File.exists?(path) do
-          {:ok, %{path: path}}
+          {:ok, %{path: path, use_file_locks: use_file_locks}}
         else
           {:error, :not_found}
         end
@@ -100,10 +106,23 @@ defmodule ExZarr.Storage.Backend.Filesystem do
     version = detect_version(state.path)
     chunk_path = build_chunk_path(state.path, chunk_index, version)
 
-    case File.read(chunk_path) do
-      {:ok, data} -> {:ok, data}
-      {:error, :enoent} -> {:error, :not_found}
-      {:error, reason} -> {:error, reason}
+    if Map.get(state, :use_file_locks, true) do
+      # Use file locking for safe reads
+      case FileLock.with_read_lock(chunk_path, [timeout: 5000], fn ->
+             File.read(chunk_path)
+           end) do
+        {:ok, {:ok, data}} -> {:ok, data}
+        {:ok, {:error, :enoent}} -> {:error, :not_found}
+        {:ok, {:error, reason}} -> {:error, reason}
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      # Original logic without file locking
+      case File.read(chunk_path) do
+        {:ok, data} -> {:ok, data}
+        {:error, :enoent} -> {:error, :not_found}
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 
@@ -114,7 +133,30 @@ defmodule ExZarr.Storage.Backend.Filesystem do
     chunk_dir = Path.dirname(chunk_path)
 
     with :ok <- ensure_directory(chunk_dir) do
-      File.write(chunk_path, data)
+      if Map.get(state, :use_file_locks, true) do
+        # Use file locking for atomic writes with fsync
+        case FileLock.with_write_lock(chunk_path, [timeout: 5000], fn ->
+               with :ok <- File.write(chunk_path, data) do
+                 # Ensure data is fully written to disk before releasing lock
+                 case :file.open(chunk_path, [:read, :raw]) do
+                   {:ok, fd} ->
+                     _ = :file.sync(fd)
+                     _ = :file.close(fd)
+                     :ok
+
+                   {:error, reason} ->
+                     {:error, reason}
+                 end
+               end
+             end) do
+          {:ok, :ok} -> :ok
+          {:ok, {:error, reason}} -> {:error, reason}
+          {:error, reason} -> {:error, reason}
+        end
+      else
+        # Original logic without file locking
+        File.write(chunk_path, data)
+      end
     end
   end
 
