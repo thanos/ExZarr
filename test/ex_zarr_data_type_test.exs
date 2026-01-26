@@ -251,10 +251,17 @@ defmodule ExZarr.DataTypeTest do
   describe "supported_types/0" do
     test "returns list of all supported types" do
       types = ExZarr.DataType.supported_types()
-      assert length(types) == 10
+      assert length(types) == 15
+      # Original types
       assert :int32 in types
       assert :float64 in types
       assert :uint8 in types
+      # New types
+      assert :bool in types
+      assert :complex64 in types
+      assert :complex128 in types
+      assert :datetime64 in types
+      assert :timedelta64 in types
     end
   end
 

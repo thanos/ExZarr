@@ -3079,6 +3079,26 @@ defmodule ExZarr.Array do
   defp encode_fill_value(value, :uint64), do: <<value::unsigned-little-64>>
   defp encode_fill_value(value, :float32), do: <<value::float-little-32>>
   defp encode_fill_value(value, :float64), do: <<value::float-little-64>>
+  defp encode_fill_value(true, :bool), do: <<1>>
+  defp encode_fill_value(false, :bool), do: <<0>>
+  defp encode_fill_value(0, :bool), do: <<0>>
+  defp encode_fill_value(_, :bool), do: <<1>>
+
+  defp encode_fill_value({real, imag}, :complex64),
+    do: <<real::float-little-32, imag::float-little-32>>
+
+  defp encode_fill_value(0, :complex64), do: <<0.0::float-little-32, 0.0::float-little-32>>
+
+  defp encode_fill_value({real, imag}, :complex128),
+    do: <<real::float-little-64, imag::float-little-64>>
+
+  defp encode_fill_value(0, :complex128), do: <<0.0::float-little-64, 0.0::float-little-64>>
+
+  defp encode_fill_value(value, :datetime64) when is_integer(value),
+    do: <<value::signed-little-64>>
+
+  defp encode_fill_value(value, :timedelta64) when is_integer(value),
+    do: <<value::signed-little-64>>
 
   defp dtype_size(:int8), do: 1
   defp dtype_size(:uint8), do: 1
@@ -3090,6 +3110,11 @@ defmodule ExZarr.Array do
   defp dtype_size(:uint64), do: 8
   defp dtype_size(:float32), do: 4
   defp dtype_size(:float64), do: 8
+  defp dtype_size(:bool), do: 1
+  defp dtype_size(:complex64), do: 8
+  defp dtype_size(:complex128), do: 16
+  defp dtype_size(:datetime64), do: 8
+  defp dtype_size(:timedelta64), do: 8
 
   # Filter pipeline helpers
 
