@@ -1,3 +1,5 @@
+[![Coverage Status](https://coveralls.io/repos/github/thanos/ExZarr/badge.svg?branch=main)](https://coveralls.io/github/thanos/ExZarr?branch=main)
+
 # ExZarr
 
 Elixir implementation of [Zarr](https://zarr.dev): compressed, chunked, N-dimensional arrays designed for parallel computing and scientific data storage.
