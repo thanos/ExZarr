@@ -250,6 +250,39 @@ defmodule ExZarr.Storage do
   end
 
   @doc """
+  Deletes a chunk from storage.
+
+  Removes a chunk from the storage backend. This is used when resizing arrays
+  to shrink dimensions.
+
+  ## Parameters
+
+  - `storage` - Storage instance
+  - `chunk_index` - Tuple identifying the chunk to delete
+
+  ## Examples
+
+      # Delete a specific chunk
+      :ok = ExZarr.Storage.delete_chunk(storage, {0, 0})
+
+  ## Returns
+
+  - `:ok` on success
+  - `{:error, reason}` on failure
+  """
+  @spec delete_chunk(t(), tuple()) :: :ok | {:error, term()}
+  def delete_chunk(%__MODULE__{backend: backend_id, state: backend_state}, chunk_index) do
+    # Look up backend module and delegate
+    case ExZarr.Storage.Registry.get(backend_id) do
+      {:ok, backend_module} ->
+        backend_module.delete_chunk(backend_state, chunk_index)
+
+      {:error, :not_found} ->
+        {:error, {:unknown_backend, backend_id}}
+    end
+  end
+
+  @doc """
   Reads metadata from storage.
 
   Loads array metadata from storage. Automatically detects Zarr format version

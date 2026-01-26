@@ -49,7 +49,7 @@ defmodule ExZarr.Array do
 
   use GenServer
   alias ExZarr.ChunkGrid.Irregular
-  alias ExZarr.{Codecs, DataType, Metadata, MetadataV3, Storage}
+  alias ExZarr.{Codecs, DataType, Indexing, Metadata, MetadataV3, Storage}
   alias ExZarr.Codecs.PipelineV3
   alias ExZarr.Codecs.Registry
   alias ExZarr.Codecs.ShardingIndexed
@@ -244,30 +244,99 @@ defmodule ExZarr.Array do
     Storage.write_metadata(array.storage, array.metadata, opts)
   end
 
-  # Parse slice options - supports both numeric (:start, :stop) and named dimensions
+  # Parse slice options - supports both numeric (:start, :stop, :step), maps, and named dimensions
   defp parse_slice_options(array, opts) do
     # Check if any named dimensions are provided
     named_dims = get_named_dimensions(array, opts)
 
     if Enum.empty?(named_dims) do
-      # No named dimensions, use numeric start/stop
-      start = Keyword.get(opts, :start, tuple_of_zeros(array.shape))
-      stop = Keyword.get(opts, :stop)
+      # No named dimensions, use numeric start/stop/step
+      # Support both keyword list and map formats
+      case opts do
+        # Map format with atom keys: %{start: 0, stop: 10, step: 2}
+        %{start: _, stop: _} = slice_map ->
+          start_val = Map.get(slice_map, :start, 0)
+          stop_val = Map.get(slice_map, :stop)
+          step_val = Map.get(slice_map, :step, 1)
 
-      # Calculate stop from data size if not provided and data is present (for set_slice)
-      stop =
-        if stop do
-          stop
-        else
-          array.shape
-        end
+          # Normalize negative indices
+          start = normalize_slice_index(start_val, array.shape)
+          stop = if stop_val, do: normalize_slice_index(stop_val, array.shape), else: array.shape
 
-      {:ok, {start, stop}}
+          {:ok, {start, stop, step_val}}
+
+        # Keyword list format - backward compatible, no negative index normalization
+        _ ->
+          # Check if start/stop are maps with integer keys (per-dimension format)
+          start_opt = Keyword.get(opts, :start, tuple_of_zeros(array.shape))
+          stop_opt = Keyword.get(opts, :stop, array.shape)
+          step = Keyword.get(opts, :step, 1)
+
+          # Convert map format to tuple if needed
+          start = convert_dimension_map_to_tuple(start_opt, array.shape)
+          stop = convert_dimension_map_to_tuple(stop_opt, array.shape)
+
+          # Normalize negative indices if maps were used
+          start = if is_map(start_opt), do: normalize_slice_index(start, array.shape), else: start
+          stop = if is_map(stop_opt), do: normalize_slice_index(stop, array.shape), else: stop
+
+          {:ok, {start, stop, step}}
+      end
     else
       # Named dimensions provided - convert to numeric
       convert_named_to_numeric(array, opts, named_dims)
     end
   end
+
+  # Convert dimension map format like %{0 => 5, 1 => 10} to tuple {5, 10}
+  defp convert_dimension_map_to_tuple(value, shape) when is_map(value) and not is_struct(value) do
+    # Check if it's a dimension map (integer keys)
+    if Enum.all?(Map.keys(value), &is_integer/1) do
+      ndim = tuple_size(shape)
+      # Build tuple from map, using defaults for missing dimensions
+      0..(ndim - 1)
+      |> Enum.map(fn dim -> Map.get(value, dim, elem(shape, dim)) end)
+      |> List.to_tuple()
+    else
+      value
+    end
+  end
+
+  defp convert_dimension_map_to_tuple(value, _shape), do: value
+
+  # Helper to normalize slice index (supports negative indices)
+  defp normalize_slice_index(index, shape) when is_tuple(index) and is_tuple(shape) do
+    index
+    |> Tuple.to_list()
+    |> Enum.zip(Tuple.to_list(shape))
+    |> Enum.map(fn {idx, dim_size} ->
+      if idx < 0, do: dim_size + idx, else: idx
+    end)
+    |> List.to_tuple()
+  end
+
+  defp normalize_slice_index(index, shape) when is_map(index) and not is_struct(index) do
+    # Handle map format with integer keys
+    if Enum.all?(Map.keys(index), &is_integer/1) do
+      ndim = tuple_size(shape)
+
+      0..(ndim - 1)
+      |> Enum.map(fn dim ->
+        idx = Map.get(index, dim, 0)
+        dim_size = elem(shape, dim)
+        if idx < 0, do: dim_size + idx, else: idx
+      end)
+      |> List.to_tuple()
+    else
+      index
+    end
+  end
+
+  defp normalize_slice_index(index, _shape) when is_integer(index) do
+    index
+  end
+
+  defp normalize_slice_index(index, _shape), do: index
 
   defp get_named_dimensions(array, opts) do
     case array.metadata do
@@ -333,7 +402,10 @@ defmodule ExZarr.Array do
             {start_acc ++ [start_val], stop_acc ++ [stop_val]}
           end)
 
-        {:ok, {List.to_tuple(start_list), List.to_tuple(stop_list)}}
+        # Get step parameter (default to 1)
+        step = Keyword.get(opts, :step, 1)
+
+        {:ok, {List.to_tuple(start_list), List.to_tuple(stop_list), step}}
 
       _ ->
         {:error, {:no_dimension_names, "Array does not have dimension names defined"}}
@@ -383,15 +455,218 @@ defmodule ExZarr.Array do
   - `{:ok, binary}` containing the requested data in row-major order
   - `{:error, reason}` on failure
   """
-  @spec get_slice(t(), keyword()) :: {:ok, binary()} | {:error, term()}
+  @spec get_slice(t(), keyword()) :: {:ok, binary() | tuple()} | {:error, term()}
   def get_slice(array, opts) do
-    # Parse slice options - supports both numeric (:start, :stop) and named dimensions
-    with {:ok, {start, stop}} <- parse_slice_options(array, opts) do
-      with :ok <- validate_indices(start, stop, array.shape),
-           {:ok, chunk_indices} <- calculate_chunk_indices(array, start, stop),
-           {:ok, chunks} <- read_chunks(array, chunk_indices) do
-        assemble_slice(array, chunks, start, stop)
+    # Parse slice options - supports both numeric (:start, :stop, :step) and named dimensions
+    with {:ok, {start, stop, step}} <- parse_slice_options(array, opts) do
+      # If step is 1 (or all 1s), use optimized path
+      if step_all_ones?(step) do
+        # Validate first, then check for empty range
+        with :ok <- validate_indices(start, stop, array.shape) do
+          # Check for empty range after validation passes
+          if empty_range?(start, stop) do
+            {:ok, <<>>}
+          else
+            with {:ok, chunk_indices} <- calculate_chunk_indices(array, start, stop),
+                 {:ok, chunks} <- read_chunks(array, chunk_indices) do
+              assemble_slice(array, chunks, start, stop)
+            end
+          end
+        end
+      else
+        # Use step-aware path (handles negative steps and empty ranges)
+        get_slice_with_step(array, start, stop, step)
       end
+    end
+  end
+
+  # Check if step is 1 or all 1s
+  defp step_all_ones?(1), do: true
+
+  defp step_all_ones?(step) when is_tuple(step) do
+    step |> Tuple.to_list() |> Enum.all?(&(&1 == 1))
+  end
+
+  defp step_all_ones?(_), do: false
+
+  # Get slice with step support
+  defp get_slice_with_step(array, start, stop, step) do
+    # Convert step to tuple if it's an integer (apply to first dimension, 1 for rest)
+    ndim = tuple_size(start)
+
+    step_tuple =
+      if is_integer(step) do
+        [step | List.duplicate(1, ndim - 1)] |> List.to_tuple()
+      else
+        step
+      end
+
+    if Enum.any?(Tuple.to_list(step_tuple), &(&1 == 0)) do
+      {:error, {:invalid_step, "step cannot be zero"}}
+    else
+      # For negative steps, adjust start/stop to read the correct range
+      {read_start, read_stop} =
+        adjust_range_for_negative_step(start, stop, step_tuple, array.shape)
+
+      # Handle empty ranges
+      if empty_range?(read_start, read_stop) do
+        {:ok, {}}
+      else
+        # First read the full slice without step
+        with :ok <- validate_indices(read_start, read_stop, array.shape),
+             {:ok, chunk_indices} <- calculate_chunk_indices(array, read_start, read_stop),
+             {:ok, chunks} <- read_chunks(array, chunk_indices),
+             {:ok, full_data_binary} <- assemble_slice(array, chunks, read_start, read_stop) do
+          # Convert binary to tuples for step processing
+          slice_shape =
+            Tuple.to_list(read_start)
+            |> Enum.zip(Tuple.to_list(read_stop))
+            |> Enum.map(fn {start_val, stop_val} -> stop_val - start_val end)
+            |> List.to_tuple()
+
+          element_size = dtype_size(array.dtype)
+
+          full_data =
+            binary_to_nested_tuples(full_data_binary, slice_shape, element_size, array.dtype)
+
+          # Apply step to the data
+          apply_step_to_data(full_data, step)
+        end
+      end
+    end
+  end
+
+  # Check if range is empty
+  defp empty_range?(start, stop) do
+    Tuple.to_list(start)
+    |> Enum.zip(Tuple.to_list(stop))
+    |> Enum.any?(fn {s, e} -> s >= e end)
+  end
+
+  # Adjust start/stop range for negative steps
+  defp adjust_range_for_negative_step(start, stop, step, shape) do
+    start_list = Tuple.to_list(start)
+    stop_list = Tuple.to_list(stop)
+    step_list = Tuple.to_list(step)
+    shape_list = Tuple.to_list(shape)
+
+    adjusted =
+      Enum.zip([start_list, stop_list, step_list, shape_list])
+      |> Enum.map(fn {s, e, step_val, dim_size} ->
+        if step_val < 0 do
+          # Negative step: need to read from beginning (0) up to start (s)
+          # to have all elements for reverse iteration
+          # Special case: if e == -1, it means "go all the way to the beginning"
+          # if e == dim_size - 1 (normalized from -1), treat it the same way
+          cond do
+            e == -1 or e == dim_size - 1 ->
+              # Go all the way to the beginning
+              {0, s + 1}
+
+            e < s ->
+              # Stop is before start (makes sense for negative step)
+              # Read from e+1 to s+1 to get the range
+              {max(0, e + 1), s + 1}
+
+            true ->
+              # Empty range (stop >= start with negative step)
+              {s, s}
+          end
+        else
+          {s, e}
+        end
+      end)
+
+    start_adjusted = adjusted |> Enum.map(&elem(&1, 0)) |> List.to_tuple()
+    stop_adjusted = adjusted |> Enum.map(&elem(&1, 1)) |> List.to_tuple()
+
+    {start_adjusted, stop_adjusted}
+  end
+
+  # Apply step to data by selecting elements at step intervals
+  defp apply_step_to_data(data, step) do
+    # Convert step to tuple if it's an integer
+    step_tuple =
+      if is_integer(step) do
+        # For single integer step, apply to first dimension only
+        # Infer ndim from data structure
+        ndim = get_tuple_ndim(data)
+        [step | List.duplicate(1, ndim - 1)] |> List.to_tuple()
+      else
+        step
+      end
+
+    # Apply step to tuple data
+    stepped_data = apply_step_to_tuples(data, step_tuple)
+
+    {:ok, stepped_data}
+  end
+
+  # Get number of dimensions from tuple structure
+  defp get_tuple_ndim(data) when is_tuple(data) do
+    if tuple_size(data) == 0 do
+      0
+    else
+      first = elem(data, 0)
+
+      if is_tuple(first) do
+        1 + get_tuple_ndim(first)
+      else
+        1
+      end
+    end
+  end
+
+  defp get_tuple_ndim(_), do: 0
+
+  # Apply step to tuple data structure
+  defp apply_step_to_tuples(data, step) do
+    case tuple_size(step) do
+      1 ->
+        # 1D - select every nth element
+        {step_val} = step
+        list = Tuple.to_list(data)
+
+        if step_val < 0 do
+          # Negative step - reverse and take every abs(step) element
+          list
+          |> Enum.reverse()
+          |> Enum.take_every(abs(step_val))
+          |> List.to_tuple()
+        else
+          # Positive step
+          list
+          |> Enum.take_every(step_val)
+          |> List.to_tuple()
+        end
+
+      _ ->
+        # Multi-dimensional - apply step to each dimension
+        [step_first | step_rest] = Tuple.to_list(step)
+        step_rest_tuple = List.to_tuple(step_rest)
+        list = Tuple.to_list(data)
+
+        result_list =
+          if step_first < 0 do
+            # Negative step on first dimension
+            list
+            |> Enum.reverse()
+            |> Enum.take_every(abs(step_first))
+          else
+            # Positive step on first dimension
+            list
+            |> Enum.take_every(step_first)
+          end
+
+        result_list
+        |> Enum.map(fn row ->
+          if tuple_size(step_rest_tuple) > 0 and is_tuple(row) do
+            apply_step_to_tuples(row, step_rest_tuple)
+          else
+            row
+          end
+        end)
+        |> List.to_tuple()
     end
   end
 
@@ -436,17 +711,150 @@ defmodule ExZarr.Array do
     # Validate that data is binary
     if is_binary(data) do
       # Parse slice options - supports both numeric and named dimensions
-      with {:ok, {start, stop}} <- parse_slice_options(array, opts) do
-        with :ok <- validate_indices(start, stop, array.shape),
-             :ok <- validate_write_data_size(data, start, stop, array.dtype),
-             {:ok, chunk_indices} <- calculate_chunk_indices(array, start, stop),
-             {:ok, chunks} <- split_into_chunks(array, data, start, stop) do
-          write_chunks(array, chunks, chunk_indices)
+      with {:ok, {start, stop, step}} <- parse_slice_options(array, opts) do
+        # If step is not 1, we need to handle it differently
+        if step_all_ones?(step) do
+          with :ok <- validate_indices(start, stop, array.shape),
+               :ok <- validate_write_data_size(data, start, stop, array.dtype),
+               {:ok, chunk_indices} <- calculate_chunk_indices(array, start, stop),
+               {:ok, chunks} <- split_into_chunks(array, data, start, stop) do
+            write_chunks(array, chunks, chunk_indices)
+          end
+        else
+          # Write with step support
+          set_slice_with_step(array, data, start, stop, step)
         end
       end
     else
       {:error, {:invalid_data, "data must be binary, got: #{inspect(data)}"}}
     end
+  end
+
+  # Set slice with step support
+  defp set_slice_with_step(array, data, start, stop, step) do
+    element_size = dtype_size(array.dtype)
+
+    # Convert step to tuple if it's an integer
+    step_tuple =
+      if is_integer(step) do
+        ndim = tuple_size(start)
+        [step | List.duplicate(1, ndim - 1)] |> List.to_tuple()
+      else
+        step
+      end
+
+    # Calculate expected data size based on step
+    expected_size =
+      Tuple.to_list(start)
+      |> Enum.zip(Tuple.to_list(stop))
+      |> Enum.zip(Tuple.to_list(step_tuple))
+      |> Enum.map(fn {{s, e}, step_val} -> div(e - s + step_val - 1, step_val) end)
+      |> Enum.reduce(1, &(&1 * &2))
+
+    if byte_size(data) != expected_size * element_size do
+      {:error,
+       {:data_size_mismatch,
+        "Expected #{expected_size * element_size} bytes for stepped write, got #{byte_size(data)}"}}
+    else
+      # Read existing data, apply step writes, then write back
+      with :ok <- validate_indices(start, stop, array.shape),
+           {:ok, chunk_indices} <- calculate_chunk_indices(array, start, stop),
+           {:ok, chunks} <- read_chunks(array, chunk_indices),
+           {:ok, existing_binary} <- assemble_slice_binary(array, chunks, start, stop) do
+        # Apply stepped writes to existing data
+        modified_data =
+          apply_stepped_writes(existing_binary, data, start, stop, step_tuple, element_size)
+
+        # Write modified data back
+        with {:ok, new_chunks} <- split_into_chunks(array, modified_data, start, stop) do
+          write_chunks(array, new_chunks, chunk_indices)
+        end
+      end
+    end
+  end
+
+  # Apply stepped writes to existing data
+  defp apply_stepped_writes(existing_data, new_data, start, stop, step, element_size) do
+    # Calculate shape of full data
+    full_shape =
+      Tuple.to_list(start)
+      |> Enum.zip(Tuple.to_list(stop))
+      |> Enum.map(fn {s, e} -> e - s end)
+      |> List.to_tuple()
+
+    ndim = tuple_size(full_shape)
+
+    case ndim do
+      1 ->
+        {size} = full_shape
+        {step_val} = step
+        apply_stepped_writes_1d(existing_data, new_data, size, step_val, element_size)
+
+      2 ->
+        {h, w} = full_shape
+        {step_h, step_w} = step
+        apply_stepped_writes_2d(existing_data, new_data, h, w, step_h, step_w, element_size)
+
+      _ ->
+        apply_stepped_writes_nd(existing_data, new_data, full_shape, step, element_size)
+    end
+  end
+
+  defp apply_stepped_writes_1d(existing, new_data, size, step, element_size) do
+    indices = Enum.take_every(0..(size - 1), step)
+    new_elements = for <<elem::binary-size(element_size) <- new_data>>, do: elem
+
+    # Build result by replacing elements at stepped indices
+    Enum.zip(indices, new_elements)
+    |> Enum.reduce(existing, fn {idx, new_elem}, acc ->
+      offset = idx * element_size
+      <<before::binary-size(offset), _::binary-size(element_size), after_part::binary>> = acc
+      <<before::binary, new_elem::binary, after_part::binary>>
+    end)
+  end
+
+  defp apply_stepped_writes_2d(existing, new_data, height, width, step_h, step_w, element_size) do
+    row_indices = Enum.take_every(0..(height - 1), step_h)
+    col_indices = Enum.take_every(0..(width - 1), step_w)
+
+    # Generate all (row, col) pairs in order
+    index_pairs = for row <- row_indices, col <- col_indices, do: {row, col}
+    new_elements = for <<elem::binary-size(element_size) <- new_data>>, do: elem
+
+    # Build result by replacing elements at stepped indices
+    Enum.zip(index_pairs, new_elements)
+    |> Enum.reduce(existing, fn {{row, col}, new_elem}, acc ->
+      offset = (row * width + col) * element_size
+      <<before::binary-size(offset), _::binary-size(element_size), after_part::binary>> = acc
+      <<before::binary, new_elem::binary, after_part::binary>>
+    end)
+  end
+
+  defp apply_stepped_writes_nd(existing, new_data, shape, step, element_size) do
+    # Generate all indices with step
+    ranges =
+      Tuple.to_list(shape)
+      |> Enum.zip(Tuple.to_list(step))
+      |> Enum.map(fn {size, s} ->
+        Enum.take_every(0..(size - 1), s)
+      end)
+
+    strides = ExZarr.Chunk.calculate_strides(shape)
+    index_lists = cartesian_product(ranges)
+    new_elements = for <<elem::binary-size(element_size) <- new_data>>, do: elem
+
+    # Build result by replacing elements at stepped indices
+    Enum.zip(index_lists, new_elements)
+    |> Enum.reduce(existing, fn {index_list, new_elem}, acc ->
+      offset =
+        index_list
+        |> Enum.zip(Tuple.to_list(strides))
+        |> Enum.reduce(0, fn {idx, stride}, a -> a + idx * stride end)
+
+      byte_offset = offset * element_size
+      <<before::binary-size(byte_offset), _::binary-size(element_size), after_part::binary>> = acc
+      <<before::binary, new_elem::binary, after_part::binary>>
+    end)
   end
 
   @doc """
@@ -474,7 +882,764 @@ defmodule ExZarr.Array do
   """
   @spec to_binary(t()) :: {:ok, binary()} | {:error, term()}
   def to_binary(array) do
-    get_slice(array, start: tuple_of_zeros(array.shape), stop: array.shape)
+    # get_slice without step parameter returns binary (basic slicing)
+    case get_slice(array, start: tuple_of_zeros(array.shape), stop: array.shape) do
+      {:ok, data} when is_binary(data) -> {:ok, data}
+      {:ok, _tuple} -> {:error, :unexpected_tuple_result}
+      error -> error
+    end
+  end
+
+  @doc """
+  Fancy indexing with integer arrays (vindex equivalent).
+
+  Select elements using arrays of indices for each dimension.
+  Each index array must have the same length, and the result will have
+  that length in the first dimension.
+
+  ## Parameters
+
+  - `array` - The array to index
+  - `index_arrays` - List of index arrays, one per dimension
+
+  ## Examples
+
+      # 2D array indexing - select 3 specific elements
+      {:ok, data} = ExZarr.Array.get_fancy(array, [[0, 1, 2], [5, 10, 15]])
+      # Returns 3 elements at positions (0,5), (1,10), (2,15)
+
+      # 1D array indexing
+      {:ok, data} = ExZarr.Array.get_fancy(array, [[0, 5, 10, 15]])
+
+  ## Returns
+
+  - `{:ok, binary}` containing the selected elements
+  - `{:error, reason}` on failure
+  """
+  @spec get_fancy(t(), list(list(integer()))) :: {:ok, binary()} | {:error, term()}
+  def get_fancy(array, index_arrays) do
+    # Validate inputs
+    with :ok <- validate_fancy_indexing(array, index_arrays) do
+      # Normalize negative indices
+      shape_list = Tuple.to_list(array.shape)
+
+      normalized_arrays =
+        Enum.zip(index_arrays, shape_list)
+        |> Enum.map(fn {indices, dim_size} ->
+          Enum.map(indices, fn idx ->
+            case Indexing.normalize_index(idx, dim_size) do
+              {:ok, normalized} -> normalized
+              {:error, _} -> idx
+            end
+          end)
+        end)
+
+      # Extract elements
+      extract_fancy_elements(array, normalized_arrays)
+    end
+  end
+
+  defp validate_fancy_indexing(array, index_arrays) do
+    ndim = tuple_size(array.shape)
+
+    cond do
+      not is_list(index_arrays) ->
+        {:error, {:invalid_indices, "index_arrays must be a list"}}
+
+      length(index_arrays) != ndim ->
+        {:error,
+         {:dimension_mismatch,
+          "Number of index arrays (#{length(index_arrays)}) must match array dimensions (#{ndim})"}}
+
+      true ->
+        # Validate all arrays have same length
+        lengths = Enum.map(index_arrays, &length/1)
+
+        if Enum.all?(lengths, &(&1 == hd(lengths))) do
+          # Validate indices are within bounds
+          shape_list = Tuple.to_list(array.shape)
+
+          Enum.zip(index_arrays, shape_list)
+          |> Enum.reduce_while(:ok, fn {indices, dim_size}, _acc ->
+            case Indexing.validate_fancy_indices(indices, dim_size) do
+              :ok -> {:cont, :ok}
+              error -> {:halt, error}
+            end
+          end)
+        else
+          {:error, {:length_mismatch, "All index arrays must have the same length"}}
+        end
+    end
+  end
+
+  defp extract_fancy_elements(array, index_arrays) do
+    # Handle empty index arrays
+    if Enum.any?(index_arrays, &Enum.empty?/1) do
+      {:ok, {}}
+    else
+      # Transpose index_arrays to get coordinate tuples
+      coordinates =
+        index_arrays
+        |> Enum.map(&Enum.with_index/1)
+        |> Enum.zip()
+        |> Enum.map(fn tuple ->
+          tuple
+          |> Tuple.to_list()
+          |> Enum.map(fn {idx, _} -> idx end)
+          |> List.to_tuple()
+        end)
+
+      # Read each element
+      results =
+        Enum.map(coordinates, fn coord ->
+          # Read single element at coord
+          start = coord
+          stop = coord |> Tuple.to_list() |> Enum.map(&(&1 + 1)) |> List.to_tuple()
+
+          case get_slice(array, start: start, stop: stop) do
+            {:ok, data} ->
+              # data is binary for single element, decode it
+              decode_element(data, array.dtype)
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+        end)
+
+      # Check for errors
+      errors = Enum.filter(results, &match?({:error, _}, &1))
+
+      if Enum.empty?(errors) do
+        # Convert list of elements to tuple
+        result = List.to_tuple(results)
+        {:ok, result}
+      else
+        hd(errors)
+      end
+    end
+  end
+
+  # Extract single element from nested tuple structure
+  # defp extract_single_element(data) when is_tuple(data) do
+  #   case tuple_size(data) do
+  #     0 ->
+  #       nil
+
+  #     1 ->
+  #       elem = elem(data, 0)
+  #       if is_tuple(elem), do: extract_single_element(elem), else: elem
+
+  #     # Should not happen for single element
+  #     _ ->
+  #       data
+  #   end
+  # end
+
+  # defp extract_single_element(data), do: data
+
+  @doc """
+  Orthogonal fancy indexing (oindex equivalent).
+
+  Like get_fancy but treats each index array as defining a separate axis.
+  The result shape is the product of the lengths of all index arrays.
+
+  ## Parameters
+
+  - `array` - The array to index
+  - `index_arrays` - List of index arrays, one per dimension
+
+  ## Examples
+
+      # 2D array orthogonal indexing
+      {:ok, data} = ExZarr.Array.get_orthogonal(array, [[0, 1], [5, 10, 15]])
+      # Returns 2x3 array with elements at all combinations:
+      # (0,5), (0,10), (0,15), (1,5), (1,10), (1,15)
+
+  ## Returns
+
+  - `{:ok, binary}` containing the selected elements in row-major order
+  - `{:error, reason}` on failure
+  """
+  @spec get_orthogonal(t(), list(list(integer()))) :: {:ok, binary()} | {:error, term()}
+  def get_orthogonal(array, index_arrays) do
+    ndim = tuple_size(array.shape)
+
+    # Validate inputs
+    cond do
+      not is_list(index_arrays) ->
+        {:error, {:invalid_indices, "index_arrays must be a list"}}
+
+      length(index_arrays) != ndim ->
+        {:error,
+         {:dimension_mismatch,
+          "Number of index arrays (#{length(index_arrays)}) must match array dimensions (#{ndim})"}}
+
+      true ->
+        # Normalize negative indices
+        shape_list = Tuple.to_list(array.shape)
+
+        normalized_arrays =
+          Enum.zip(index_arrays, shape_list)
+          |> Enum.map(fn {indices, dim_size} ->
+            Enum.map(indices, fn idx ->
+              case Indexing.normalize_index(idx, dim_size) do
+                {:ok, normalized} -> normalized
+                {:error, _} -> idx
+              end
+            end)
+          end)
+
+        # Validate all indices
+        result =
+          Enum.zip(normalized_arrays, shape_list)
+          |> Enum.reduce_while(:ok, fn {indices, dim_size}, _acc ->
+            case Indexing.validate_fancy_indices(indices, dim_size) do
+              :ok -> {:cont, :ok}
+              error -> {:halt, error}
+            end
+          end)
+
+        case result do
+          :ok -> extract_orthogonal_elements(array, normalized_arrays)
+          error -> error
+        end
+    end
+  end
+
+  defp extract_orthogonal_elements(array, index_arrays) do
+    # Generate all combinations using cartesian product
+    coordinates = cartesian_product(index_arrays)
+
+    # Read each element
+    results =
+      Enum.map(coordinates, fn coord_list ->
+        coord = List.to_tuple(coord_list)
+        start = coord
+        stop = coord |> Tuple.to_list() |> Enum.map(&(&1 + 1)) |> List.to_tuple()
+
+        case get_slice(array, start: start, stop: stop) do
+          {:ok, data} ->
+            # data is binary for single element, decode it
+            decode_element(data, array.dtype)
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+      end)
+
+    # Check for errors
+    errors = Enum.filter(results, &match?({:error, _}, &1))
+
+    if Enum.empty?(errors) do
+      # Reshape results based on index array lengths
+      result = reshape_orthogonal_results(results, index_arrays)
+      {:ok, result}
+    else
+      hd(errors)
+    end
+  end
+
+  # Reshape flat results into nested tuple structure based on index array lengths
+  defp reshape_orthogonal_results(results, index_arrays) do
+    lengths = Enum.map(index_arrays, &length/1)
+    reshape_recursive(results, lengths)
+  end
+
+  defp reshape_recursive(results, [len]) do
+    # 1D case - just convert to tuple
+    Enum.take(results, len) |> List.to_tuple()
+  end
+
+  defp reshape_recursive(results, [first_len | rest_lens]) do
+    # Multi-dimensional case
+    chunk_size = Enum.reduce(rest_lens, 1, &(&1 * &2))
+
+    results
+    |> Enum.chunk_every(chunk_size)
+    |> Enum.take(first_len)
+    |> Enum.map(fn chunk ->
+      if length(rest_lens) == 1 do
+        List.to_tuple(chunk)
+      else
+        reshape_recursive(chunk, rest_lens)
+      end
+    end)
+    |> List.to_tuple()
+  end
+
+  @doc """
+  Boolean indexing with a mask.
+
+  Selects elements where the mask is true. The mask must match the array shape.
+  For multidimensional arrays, the mask is flattened and elements are selected
+  in row-major order.
+
+  ## Parameters
+
+  - `array` - The array to index
+  - `mask` - Tuple of booleans matching the array shape
+
+  ## Examples
+
+      # 1D array
+      mask = {true, false, true, false, true}
+      {:ok, selected} = ExZarr.Array.get_boolean(array, mask)
+      # Returns elements at indices 0, 2, 4
+
+      # 2D array
+      mask = {{true, false, true}, {false, true, false}}
+      {:ok, selected} = ExZarr.Array.get_boolean(array, mask)
+
+  ## Returns
+
+  - `{:ok, tuple}` containing the selected elements
+  - `{:error, reason}` on failure
+  """
+  @spec get_boolean(t(), tuple()) :: {:ok, tuple()} | {:error, term()}
+  def get_boolean(array, mask) do
+    # Validate mask
+    with :ok <- validate_boolean_mask(array, mask) do
+      # Convert mask to flat list of indices
+      indices = flatten_mask_to_indices(mask)
+
+      # Read elements at those indices
+      extract_boolean_elements(array, indices)
+    end
+  end
+
+  defp validate_boolean_mask(array, mask) do
+    # Check if mask shape matches array shape
+    if shapes_match?(mask, array.shape) do
+      # Verify all elements are boolean
+      if all_elements_boolean?(mask) do
+        :ok
+      else
+        {:error, {:invalid_mask, "Mask must contain only boolean values"}}
+      end
+    else
+      {:error,
+       {:shape_mismatch,
+        "Mask shape must match array shape. Array: #{inspect(array.shape)}, Mask: #{inspect(get_mask_shape(mask))}"}}
+    end
+  end
+
+  defp shapes_match?(mask, shape) when is_tuple(mask) and is_tuple(shape) do
+    get_mask_shape(mask) == shape
+  end
+
+  defp get_mask_shape(mask) when is_tuple(mask) do
+    # Get shape of nested tuple structure
+    first = elem(mask, 0)
+
+    if is_tuple(first) do
+      # Multi-dimensional
+      inner_shape = get_mask_shape(first)
+      List.to_tuple([tuple_size(mask) | Tuple.to_list(inner_shape)])
+    else
+      # 1D
+      {tuple_size(mask)}
+    end
+  end
+
+  defp all_elements_boolean?(mask) when is_tuple(mask) do
+    mask
+    |> Tuple.to_list()
+    |> Enum.all?(fn elem ->
+      if is_tuple(elem) do
+        all_elements_boolean?(elem)
+      else
+        is_boolean(elem)
+      end
+    end)
+  end
+
+  defp flatten_mask_to_indices(mask) do
+    flatten_mask_to_indices(mask, [], 0) |> Enum.reverse()
+  end
+
+  defp flatten_mask_to_indices(mask, acc, offset) when is_tuple(mask) do
+    first = elem(mask, 0)
+
+    if is_tuple(first) do
+      # Multi-dimensional - recurse
+      size = tuple_size(mask)
+      inner_size = count_elements(first)
+
+      0..(size - 1)
+      |> Enum.reduce(acc, fn i, a ->
+        flatten_mask_to_indices(elem(mask, i), a, offset + i * inner_size)
+      end)
+    else
+      # 1D - extract true indices
+      mask
+      |> Tuple.to_list()
+      |> Enum.with_index()
+      |> Enum.reduce(acc, fn {value, idx}, a ->
+        if value, do: [offset + idx | a], else: a
+      end)
+    end
+  end
+
+  defp count_elements(tuple) when is_tuple(tuple) do
+    first = elem(tuple, 0)
+
+    if is_tuple(first) do
+      tuple_size(tuple) * count_elements(first)
+    else
+      tuple_size(tuple)
+    end
+  end
+
+  defp extract_boolean_elements(array, indices) do
+    # Handle empty indices
+    if Enum.empty?(indices) do
+      {:ok, {}}
+    else
+      shape_list = Tuple.to_list(array.shape)
+
+      # Convert flat indices to coordinates
+      strides = ExZarr.Chunk.calculate_strides(array.shape)
+
+      results =
+        Enum.map(indices, fn flat_idx ->
+          # Convert flat index to coordinates
+          coord = flat_to_coord(flat_idx, strides, length(shape_list))
+          start = coord
+          stop = coord |> Tuple.to_list() |> Enum.map(&(&1 + 1)) |> List.to_tuple()
+
+          case get_slice(array, start: start, stop: stop) do
+            {:ok, data} ->
+              # data is binary for single element, decode it
+              decode_element(data, array.dtype)
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+        end)
+
+      # Check for errors
+      errors = Enum.filter(results, &match?({:error, _}, &1))
+
+      if Enum.empty?(errors) do
+        # Convert list of elements to tuple
+        result = List.to_tuple(results)
+        {:ok, result}
+      else
+        hd(errors)
+      end
+    end
+  end
+
+  defp flat_to_coord(flat_idx, strides, ndim) do
+    strides_list = Tuple.to_list(strides)
+
+    coord_list =
+      Enum.reduce(0..(ndim - 1), {flat_idx, []}, fn i, {remaining, acc} ->
+        stride = Enum.at(strides_list, i)
+        coord = div(remaining, stride)
+        {rem(remaining, stride), acc ++ [coord]}
+      end)
+      |> elem(1)
+
+    List.to_tuple(coord_list)
+  end
+
+  @doc """
+  Block indexing for chunk-aligned access.
+
+  Returns data in complete chunks for efficient access. The blocks are
+  aligned to chunk boundaries, which can be more efficient than arbitrary
+  slicing as it avoids partial chunk reads.
+
+  ## Parameters
+
+  - `array` - The array to read from
+  - `opts` - Options including `:start` and `:stop` tuples
+
+  ## Options
+
+  - `:start` - Starting indices (default: all zeros)
+  - `:stop` - Stopping indices (default: array shape)
+
+  ## Examples
+
+      # Read blocks covering a region
+      {:ok, blocks} = ExZarr.Array.get_blocks(array, start: {0, 0}, stop: {100, 100})
+
+      # Read all blocks
+      {:ok, blocks} = ExZarr.Array.get_blocks(array, [])
+
+  ## Returns
+
+  - `{:ok, list}` where each element is `{start_indices, stop_indices, binary_data}`
+  - `{:error, reason}` on failure
+  """
+  @spec get_blocks(t(), keyword()) :: {:ok, list({tuple(), tuple(), binary()})} | {:error, term()}
+  def get_blocks(array, opts \\ []) do
+    start = Keyword.get(opts, :start, tuple_of_zeros(array.shape))
+    stop = Keyword.get(opts, :stop, array.shape)
+
+    with :ok <- validate_indices(start, stop, array.shape) do
+      # Calculate which chunks overlap with the region
+      {:ok, chunk_indices} = calculate_chunk_indices(array, start, stop)
+
+      # For each chunk, read it and return with its bounds
+      results =
+        Enum.map(chunk_indices, fn chunk_idx ->
+          {chunk_start, chunk_stop} = get_chunk_bounds(array, chunk_idx)
+
+          case read_chunks(array, [chunk_idx]) do
+            {:ok, [chunk_data]} ->
+              {:ok, {chunk_start, chunk_stop, chunk_data}}
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+        end)
+
+      # Check for errors
+      errors = Enum.filter(results, &match?({:error, _}, &1))
+
+      if Enum.empty?(errors) do
+        blocks = Enum.map(results, fn {:ok, block} -> block end)
+        {:ok, blocks}
+      else
+        hd(errors)
+      end
+    end
+  end
+
+  @doc """
+  Resizes the array to a new shape.
+
+  Can grow or shrink dimensions. When growing, new elements are filled with
+  the array's fill_value. When shrinking, data outside the new bounds is
+  discarded by deleting affected chunks.
+
+  ## Parameters
+
+  - `array` - The array to resize
+  - `new_shape` - New shape as a tuple of positive integers
+
+  ## Examples
+
+      # Grow array from {100, 100} to {200, 200}
+      :ok = ExZarr.Array.resize(array, {200, 200})
+
+      # Shrink array from {200, 200} to {100, 100}
+      :ok = ExZarr.Array.resize(array, {100, 100})
+
+  ## Returns
+
+  - `{:ok, updated_array}` on success with the array struct updated to reflect the new shape
+  - `{:error, reason}` on failure
+
+  ## Notes
+
+  - New elements are lazily created (filled with fill_value on first read)
+  - Shrinking may delete chunks to free storage space
+  - The array metadata is updated with the new shape
+  - Returns a new array struct with updated shape (Elixir structs are immutable)
+  """
+  @spec resize(t(), tuple()) :: {:ok, t()} | {:error, term()}
+  def resize(array, new_shape) do
+    # Validate new shape
+    with {:ok, _validated_shape} <- validate_shape(new_shape) do
+      old_shape = array.shape
+      ndim = tuple_size(old_shape)
+
+      if tuple_size(new_shape) != ndim do
+        {:error,
+         {:dimension_mismatch, "New shape must have same number of dimensions as array (#{ndim})"}}
+      else
+        # Check if we're shrinking in any dimension
+        is_shrinking =
+          Enum.zip(Tuple.to_list(old_shape), Tuple.to_list(new_shape))
+          |> Enum.any?(fn {old_size, new_size} -> new_size < old_size end)
+
+        # If shrinking, delete chunks that are outside the new bounds
+        if is_shrinking do
+          delete_chunks_outside_bounds(array, new_shape)
+        end
+
+        # Update metadata with new shape
+        updated_metadata =
+          case array.metadata do
+            %Metadata{} = m -> %{m | shape: new_shape}
+            %MetadataV3{} = m -> %{m | shape: new_shape}
+          end
+
+        # Save updated metadata
+        case Storage.write_metadata(array.storage, updated_metadata, []) do
+          :ok ->
+            # Return updated array struct with new shape and metadata
+            updated_array = %{array | shape: new_shape, metadata: updated_metadata}
+            {:ok, updated_array}
+
+          error ->
+            error
+        end
+      end
+    end
+  end
+
+  defp delete_chunks_outside_bounds(array, new_shape) do
+    # Calculate all possible chunk indices for old shape
+    old_shape = array.shape
+    chunk_shape = array.chunks
+
+    # Calculate number of chunks in each dimension for old shape
+    old_num_chunks =
+      Tuple.to_list(old_shape)
+      |> Enum.zip(Tuple.to_list(chunk_shape))
+      |> Enum.map(fn {dim_size, chunk_size} ->
+        div(dim_size + chunk_size - 1, chunk_size)
+      end)
+
+    # Calculate number of chunks in each dimension for new shape
+    new_num_chunks =
+      Tuple.to_list(new_shape)
+      |> Enum.zip(Tuple.to_list(chunk_shape))
+      |> Enum.map(fn {dim_size, chunk_size} ->
+        div(dim_size + chunk_size - 1, chunk_size)
+      end)
+
+    # Generate all chunk indices for old shape
+    old_chunk_ranges =
+      Enum.map(old_num_chunks, fn n -> 0..(n - 1) end)
+
+    all_old_chunks = cartesian_product(old_chunk_ranges)
+
+    # Filter to get chunks that are outside new bounds
+    chunks_to_delete =
+      Enum.filter(all_old_chunks, fn chunk_idx_list ->
+        chunk_idx = List.to_tuple(chunk_idx_list)
+
+        # Check if any dimension exceeds new bounds
+        Tuple.to_list(chunk_idx)
+        |> Enum.zip(new_num_chunks)
+        |> Enum.any?(fn {idx, max_idx} -> idx >= max_idx end)
+      end)
+
+    # Delete each chunk
+    Enum.each(chunks_to_delete, fn chunk_idx_list ->
+      chunk_idx = List.to_tuple(chunk_idx_list)
+      # Attempt to delete, ignore errors (chunk may not exist)
+      Storage.delete_chunk(array.storage, chunk_idx)
+    end)
+
+    :ok
+  end
+
+  @doc """
+  Appends data along an axis.
+
+  Efficient for adding data incrementally. The array is resized along the
+  specified axis, and the new data is written at the end.
+
+  ## Parameters
+
+  - `array` - The array to append to
+  - `data` - Binary data or tuple to append
+  - `opts` - Options including `:axis`
+
+  ## Options
+
+  - `:axis` - Axis along which to append (default: 0)
+
+  ## Examples
+
+      # Append rows to a 2D array
+      data = <<...>>  # New row data
+      :ok = ExZarr.Array.append(array, data, axis: 0)
+
+      # Append columns to a 2D array
+      data = <<...>>  # New column data
+      :ok = ExZarr.Array.append(array, data, axis: 1)
+
+  ## Returns
+
+  - `{:ok, updated_array}` on success with the array struct updated to reflect the new shape
+  - `{:error, reason}` on failure
+
+  ## Notes
+
+  - The array is automatically resized to accommodate the new data
+  - Data size must be compatible with the array shape (all dimensions except axis)
+  - Returns a new array struct with updated shape (Elixir structs are immutable)
+  """
+  @spec append(t(), binary(), keyword()) :: {:ok, t()} | {:error, term()}
+  def append(array, data, opts \\ []) do
+    axis = Keyword.get(opts, :axis, 0)
+    ndim = tuple_size(array.shape)
+
+    # Validate axis
+    if axis < 0 or axis >= ndim do
+      {:error, {:invalid_axis, "Axis #{axis} out of bounds for #{ndim}-dimensional array"}}
+    else
+      element_size = dtype_size(array.dtype)
+      data_size = byte_size(data)
+
+      # Calculate expected data size for one "slice" along the axis
+      shape_list = Tuple.to_list(array.shape)
+
+      slice_size =
+        shape_list
+        |> Enum.with_index()
+        |> Enum.filter(fn {_size, idx} -> idx != axis end)
+        |> Enum.map(fn {size, _idx} -> size end)
+        |> Enum.reduce(1, &(&1 * &2))
+
+      expected_bytes_per_unit = slice_size * element_size
+
+      if rem(data_size, expected_bytes_per_unit) != 0 do
+        {:error,
+         {:data_size_mismatch,
+          "Data size (#{data_size} bytes) must be a multiple of slice size (#{expected_bytes_per_unit} bytes)"}}
+      else
+        # Calculate how many units we're appending
+        num_units = div(data_size, expected_bytes_per_unit)
+
+        # Calculate new size along axis
+        old_size = Enum.at(shape_list, axis)
+        new_size = old_size + num_units
+
+        # Build new shape
+        new_shape =
+          shape_list
+          |> Enum.with_index()
+          |> Enum.map(fn {size, idx} ->
+            if idx == axis, do: new_size, else: size
+          end)
+          |> List.to_tuple()
+
+        # Resize array - now returns {:ok, updated_array}
+        with {:ok, resized_array} <- resize(array, new_shape) do
+          # Build start and stop for writing
+          start =
+            shape_list
+            |> Enum.with_index()
+            |> Enum.map(fn {_size, idx} ->
+              if idx == axis, do: old_size, else: 0
+            end)
+            |> List.to_tuple()
+
+          stop =
+            shape_list
+            |> Enum.with_index()
+            |> Enum.map(fn {size, idx} ->
+              if idx == axis, do: new_size, else: size
+            end)
+            |> List.to_tuple()
+
+          # Write data at the end using the resized array
+          case set_slice(resized_array, data, start: start, stop: stop) do
+            :ok -> {:ok, resized_array}
+            error -> error
+          end
+        end
+      end
+    end
   end
 
   @doc """
@@ -863,6 +2028,62 @@ defmodule ExZarr.Array do
     end)
   end
 
+  # Assemble slice and return as binary (for writes)
+  defp assemble_slice_binary(array, chunks, start, stop) do
+    # Calculate the shape of the output slice
+    slice_shape =
+      Tuple.to_list(start)
+      |> Enum.zip(Tuple.to_list(stop))
+      |> Enum.map(fn {start_val, stop_val} -> stop_val - start_val end)
+      |> List.to_tuple()
+
+    slice_size =
+      slice_shape
+      |> Tuple.to_list()
+      |> Enum.reduce(1, &(&1 * &2))
+
+    # Handle empty slices
+    if slice_size == 0 do
+      {:ok, <<>>}
+    else
+      element_size = dtype_size(array.dtype)
+      output_size = slice_size * element_size
+
+      # Initialize output buffer with fill values
+      output = :binary.copy(<<0>>, output_size)
+
+      # Get chunk indices that were read
+      {:ok, chunk_indices} = calculate_chunk_indices(array, start, stop)
+
+      # For each chunk, extract the relevant portion and place it in the output
+      output =
+        Enum.zip(chunks, chunk_indices)
+        |> Enum.reduce(output, fn {chunk_data, chunk_index}, acc ->
+          # Get the bounds of this chunk
+          {chunk_start, chunk_stop} = get_chunk_bounds(array, chunk_index)
+
+          # Calculate overlap between chunk and requested slice
+          overlap_start = tuple_max(chunk_start, start)
+          overlap_stop = tuple_min(chunk_stop, stop)
+
+          # Extract data from chunk and place in output
+          extract_and_place_chunk_data(
+            acc,
+            chunk_data,
+            array.chunks,
+            slice_shape,
+            chunk_start,
+            overlap_start,
+            overlap_stop,
+            start,
+            element_size
+          )
+        end)
+
+      {:ok, output}
+    end
+  end
+
   defp assemble_slice(array, chunks, start, stop) do
     # Calculate the shape of the output slice
     slice_shape =
@@ -876,41 +2097,147 @@ defmodule ExZarr.Array do
       |> Tuple.to_list()
       |> Enum.reduce(1, &(&1 * &2))
 
-    element_size = dtype_size(array.dtype)
-    output_size = slice_size * element_size
+    # Handle empty slices
+    if slice_size == 0 do
+      {:ok, <<>>}
+    else
+      element_size = dtype_size(array.dtype)
+      output_size = slice_size * element_size
 
-    # Initialize output buffer with fill values
-    output = :binary.copy(<<0>>, output_size)
+      # Initialize output buffer with fill values
+      output = :binary.copy(<<0>>, output_size)
 
-    # Get chunk indices that were read
-    {:ok, chunk_indices} = calculate_chunk_indices(array, start, stop)
+      # Get chunk indices that were read
+      {:ok, chunk_indices} = calculate_chunk_indices(array, start, stop)
 
-    # For each chunk, extract the relevant portion and place it in the output
-    output =
-      Enum.zip(chunks, chunk_indices)
-      |> Enum.reduce(output, fn {chunk_data, chunk_index}, acc ->
-        # Get the bounds of this chunk
-        {chunk_start, chunk_stop} = get_chunk_bounds(array, chunk_index)
+      # For each chunk, extract the relevant portion and place it in the output
+      output =
+        Enum.zip(chunks, chunk_indices)
+        |> Enum.reduce(output, fn {chunk_data, chunk_index}, acc ->
+          # Get the bounds of this chunk
+          {chunk_start, chunk_stop} = get_chunk_bounds(array, chunk_index)
 
-        # Calculate overlap between chunk and requested slice
-        overlap_start = tuple_max(chunk_start, start)
-        overlap_stop = tuple_min(chunk_stop, stop)
+          # Calculate overlap between chunk and requested slice
+          overlap_start = tuple_max(chunk_start, start)
+          overlap_stop = tuple_min(chunk_stop, stop)
 
-        # Extract data from chunk and place in output
-        extract_and_place_chunk_data(
-          acc,
-          chunk_data,
-          array.chunks,
-          slice_shape,
-          chunk_start,
-          overlap_start,
-          overlap_stop,
-          start,
-          element_size
-        )
-      end)
+          # Extract data from chunk and place in output
+          extract_and_place_chunk_data(
+            acc,
+            chunk_data,
+            array.chunks,
+            slice_shape,
+            chunk_start,
+            overlap_start,
+            overlap_stop,
+            start,
+            element_size
+          )
+        end)
 
-    {:ok, output}
+      {:ok, output}
+    end
+  end
+
+  # Convert binary data to nested tuples based on the shape
+  defp binary_to_nested_tuples(data, shape, element_size, dtype) do
+    case tuple_size(shape) do
+      0 ->
+        # Scalar - should not happen in normal cases
+        {}
+
+      1 ->
+        # 1D array - convert to flat tuple
+        {size} = shape
+        binary_to_tuple_1d(data, size, element_size, dtype)
+
+      _ ->
+        # Multi-dimensional - recursively build nested tuples
+        binary_to_tuple_nd(data, shape, element_size, dtype)
+    end
+  end
+
+  defp binary_to_tuple_1d(data, size, element_size, dtype) do
+    0..(size - 1)
+    |> Enum.map(fn i ->
+      offset = i * element_size
+      <<_::binary-size(offset), element::binary-size(element_size), _::binary>> = data
+      decode_element(element, dtype)
+    end)
+    |> List.to_tuple()
+  end
+
+  defp binary_to_tuple_nd(data, shape, element_size, dtype) do
+    [first_dim | rest_dims] = Tuple.to_list(shape)
+    rest_shape = List.to_tuple(rest_dims)
+
+    # Calculate size of each sub-array
+    sub_size = rest_dims |> Enum.reduce(1, &(&1 * &2))
+    sub_bytes = sub_size * element_size
+
+    0..(first_dim - 1)
+    |> Enum.map(fn i ->
+      offset = i * sub_bytes
+      <<_::binary-size(offset), sub_data::binary-size(sub_bytes), _::binary>> = data
+
+      if tuple_size(rest_shape) == 1 do
+        # Next level is 1D
+        binary_to_tuple_1d(sub_data, elem(rest_shape, 0), element_size, dtype)
+      else
+        # Recursively handle deeper nesting
+        binary_to_tuple_nd(sub_data, rest_shape, element_size, dtype)
+      end
+    end)
+    |> List.to_tuple()
+  end
+
+  # Decode a single element from binary based on dtype
+  defp decode_element(data, dtype) do
+    case dtype do
+      :int8 ->
+        <<val::8-signed>> = data
+        val
+
+      :uint8 ->
+        <<val::8-unsigned>> = data
+        val
+
+      :int16 ->
+        <<val::16-signed-little>> = data
+        val
+
+      :uint16 ->
+        <<val::16-unsigned-little>> = data
+        val
+
+      :int32 ->
+        <<val::32-signed-little>> = data
+        val
+
+      :uint32 ->
+        <<val::32-unsigned-little>> = data
+        val
+
+      :int64 ->
+        <<val::64-signed-little>> = data
+        val
+
+      :uint64 ->
+        <<val::64-unsigned-little>> = data
+        val
+
+      :float32 ->
+        <<val::32-float-little>> = data
+        val
+
+      :float64 ->
+        <<val::64-float-little>> = data
+        val
+
+      # For other types, return binary as-is
+      _ ->
+        data
+    end
   end
 
   # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
