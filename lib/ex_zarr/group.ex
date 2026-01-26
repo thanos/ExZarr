@@ -151,7 +151,8 @@ defmodule ExZarr.Group do
 
     # Merge group storage settings with array options
     # For filesystem storage, path needs to be storage.path joined with array_path
-    full_path = if group.storage.path, do: Path.join(group.storage.path, array_path), else: array_path
+    full_path =
+      if group.storage.path, do: Path.join(group.storage.path, array_path), else: array_path
 
     array_opts =
       opts
@@ -352,7 +353,11 @@ defmodule ExZarr.Group do
 
     # Build options for opening
     open_opts = [storage: group.storage.backend]
-    open_opts = if group.storage.path, do: Keyword.put(open_opts, :path, Path.join(group.storage.path, child_path)), else: open_opts
+
+    open_opts =
+      if group.storage.path,
+        do: Keyword.put(open_opts, :path, Path.join(group.storage.path, child_path)),
+        else: open_opts
 
     # Try to load as array first
     case ExZarr.open(open_opts) do
@@ -623,7 +628,11 @@ defmodule ExZarr.Group do
 
         %__MODULE__{arrays: child_arrays, groups: child_groups} ->
           header = "#{prefix}#{connector}[G] #{name}"
-          child_items = Enum.sort_by(child_arrays, fn {n, _} -> n end) ++ Enum.sort_by(child_groups, fn {n, _} -> n end)
+
+          child_items =
+            Enum.sort_by(child_arrays, fn {n, _} -> n end) ++
+              Enum.sort_by(child_groups, fn {n, _} -> n end)
+
           child_prefix = prefix <> continuation
           children = tree_recursive(child_items, child_prefix, depth + 1, max_depth, show_shapes)
           [header | children]
