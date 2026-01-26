@@ -1,8 +1,8 @@
 defmodule ExZarr.MixProject do
   use Mix.Project
 
-  @version "0.5.0"
-  @source_url "https://github.com/thanos/ex_zarr"
+  @version "0.7.0"
+  @source_url "https://github.com/thanos/ExZarr"
 
   def project do
     [

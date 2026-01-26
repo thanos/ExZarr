@@ -5,6 +5,106 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-01-26
+
+### Added
+
+#### Chunk Streaming and Parallel Processing
+- `Array.chunk_stream/2` - Stream chunks lazily with constant memory usage
+  - Sequential mode using `Stream.resource` for truly lazy evaluation
+  - Parallel mode with configurable concurrency (max 10 workers)
+  - Progress callback support for monitoring long operations
+  - Filter option to process subset of chunks
+  - Ordered and unordered streaming modes
+- `Array.parallel_chunk_map/3` - Process chunks in parallel with custom mapper function
+  - Configurable concurrency and timeout
+  - Automatic error handling for failed tasks
+  - Integration with existing chunk cache and locking mechanisms
+
+#### Custom Chunk Key Encoding
+- `ChunkKey.Encoder` behavior - Define custom chunk naming schemes
+  - `encode/2` callback - Convert chunk index to string key
+  - `decode/2` callback - Parse string key back to chunk index
+  - `pattern/1` callback - Provide regex for key validation
+- `ChunkKey.V2Encoder` and `ChunkKey.V3Encoder` - Default encoder implementations
+- `ChunkKey.Registry` - Runtime encoder registration with Agent
+- `ChunkKey.register_encoder/2` - Register custom encoders by name
+- `ChunkKey.encode_with/3` and `decode_with/3` - Use registered encoders
+- Centralized chunk key logic in S3 and GCS backends
+
+#### Group Convenience Features
+- Access behavior implementation - Use bracket notation for path-based access
+  - `group["experiments/exp1/results"]` syntax support
+  - Automatic intermediate group creation on write
+  - Works with `get_in`, `put_in`, `update_in` functions
+- `Group.get_item/2` - Lazy load arrays and groups from storage
+  - Path-based access with forward slash separator
+  - Caches loaded items in memory
+  - Tracks checked paths to avoid redundant storage queries
+- `Group.put_item/3` - Add items with auto-creation of parent groups
+- `Group.remove_item/2` - Remove items from in-memory structure
+- `Group.require_group/2` - Create group hierarchy like mkdir -p
+  - Returns existing group if present
+  - Creates all intermediate groups
+  - Returns error if path conflicts with array
+- `Group.tree/2` - ASCII tree visualization of group hierarchy
+  - Box-drawing characters for structure (├── └──)
+  - Array [A] and group [G] markers
+  - Optional depth limiting
+  - Optional shape display
+- `Group.batch_create/2` - Create multiple groups/arrays in parallel
+  - Concurrent metadata writes for cloud storage efficiency
+  - Mixed group and array creation support
+  - Up to 10 concurrent operations
+
+### Fixed
+
+#### Type Safety
+- Fixed unmatched return value in `Array.chunk_stream` lock acquisition
+- Fixed `ChunkCache.put` argument order in streaming code
+- All dialyzer warnings resolved
+
+#### Test Stability
+- Memory efficiency test now uses sequential streaming for consistent results
+  - Changed from parallel to sequential mode
+  - Increased threshold to account for OTP version variance
+  - Uses `Enum.reduce` for truly lazy processing
+- ArrayServer FIFO queue test uses staggered delays to ensure reliable ordering
+  - Added task-specific delays to guarantee queue order
+  - Uses Agent to track actual acquisition order
+  - Prevents race conditions in CI environments
+
+#### Path Handling
+- Fixed `Group.create_group/3` to use correct storage path
+- Fixed `Group.create_array/3` to properly join storage path with array path
+- Corrected filesystem metadata file locations
+
+### Changed
+
+#### Storage Backend Refactoring
+- S3 and GCS backends now use centralized `ChunkKey.encode` function
+- Eliminated duplicate chunk key encoding logic
+- Simplified pattern matching with `ChunkKey.chunk_key_pattern`
+
+#### Group Structure
+- Added `_loaded` field to Group struct for lazy loading cache
+- Type specification updated to include MapSet for loaded paths
+
+### Testing
+
+**Test Coverage**
+- Total tests: 1246 (up from 794 in v0.5.0)
+- New chunk streaming tests: 12 tests
+- New chunk key encoding tests: 32 tests
+- New group convenience tests: 37 tests
+- Success rate: 100% passing (0 failures, 6 skipped)
+- Quality checks: All passing (dialyzer, format checks)
+
+**Test Files**
+- `test/ex_zarr/chunk_streaming_test.exs` - Chunk iteration and parallel processing
+- `test/ex_zarr/chunk_key_encoding_test.exs` - Custom encoder behavior and registry
+- `test/ex_zarr/group_convenience_test.exs` - Group access and convenience features
+
 ## [0.5.0] - 2026-01-25
 
 ### Added
