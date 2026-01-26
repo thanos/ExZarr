@@ -11,6 +11,12 @@ defmodule ExZarr.Storage.Backend.GCS do
   - `:bucket` - GCS bucket name (required)
   - `:prefix` - Object prefix/path within bucket (optional, default: "")
   - `:credentials` - Path to service account JSON file or credentials map (required)
+  - `:endpoint_url` - Custom endpoint URL for fake-gcs-server or compatible services (optional)
+
+  For testing with fake-gcs-server, set the `GCS_ENDPOINT_URL` environment variable:
+  ```bash
+  export GCS_ENDPOINT_URL=http://localhost:4443  # fake-gcs-server
+  ```
 
   ## Dependencies
 
@@ -88,11 +94,16 @@ defmodule ExZarr.Storage.Backend.GCS do
     with {:ok, bucket} <- fetch_required(config, :bucket),
          {:ok, goth_name} <- setup_goth(config) do
       prefix = Keyword.get(config, :prefix, "")
+      endpoint_url = Keyword.get(config, :endpoint_url) || System.get_env("GCS_ENDPOINT_URL")
+
+      {base_url, upload_url} = build_urls(endpoint_url)
 
       state = %{
         bucket: bucket,
         prefix: prefix,
-        goth_name: goth_name
+        goth_name: goth_name,
+        base_url: base_url,
+        upload_url: upload_url
       }
 
       {:ok, state}
@@ -110,14 +121,19 @@ defmodule ExZarr.Storage.Backend.GCS do
     object_name = build_object_name(state.prefix, chunk_index)
 
     with {:ok, token} <- get_access_token(state.goth_name) do
-      url = "#{@base_url}/b/#{state.bucket}/o/#{URI.encode(object_name, &URI.char_unreserved?/1)}"
+      url =
+        "#{state.base_url}/b/#{state.bucket}/o/#{URI.encode(object_name, &URI.char_unreserved?/1)}"
 
       case req().get(url,
              params: [alt: "media"],
              headers: [{"authorization", "Bearer #{token}"}]
            ) do
-        {:ok, %{status: 200, body: body}} ->
+        {:ok, %{status: 200, body: body}} when is_binary(body) ->
           {:ok, body}
+
+        {:ok, %{status: 200, body: body}} ->
+          # Handle case where body might be decoded - should not happen for chunks
+          {:ok, IO.iodata_to_binary([body])}
 
         {:ok, %{status: 404}} ->
           {:error, :not_found}
@@ -136,7 +152,7 @@ defmodule ExZarr.Storage.Backend.GCS do
     object_name = build_object_name(state.prefix, chunk_index)
 
     with {:ok, token} <- get_access_token(state.goth_name) do
-      url = "#{@upload_url}/b/#{state.bucket}/o"
+      url = "#{state.upload_url}/b/#{state.bucket}/o"
 
       case req().post(url,
              params: [uploadType: "media", name: object_name],
@@ -163,14 +179,19 @@ defmodule ExZarr.Storage.Backend.GCS do
     object_name = build_metadata_name(state.prefix)
 
     with {:ok, token} <- get_access_token(state.goth_name) do
-      url = "#{@base_url}/b/#{state.bucket}/o/#{URI.encode(object_name, &URI.char_unreserved?/1)}"
+      url =
+        "#{state.base_url}/b/#{state.bucket}/o/#{URI.encode(object_name, &URI.char_unreserved?/1)}"
 
       case req().get(url,
              params: [alt: "media"],
              headers: [{"authorization", "Bearer #{token}"}]
            ) do
-        {:ok, %{status: 200, body: body}} ->
+        {:ok, %{status: 200, body: body}} when is_binary(body) ->
           {:ok, body}
+
+        {:ok, %{status: 200, body: body}} when is_map(body) ->
+          # Req auto-decoded JSON, re-encode it
+          {:ok, Jason.encode!(body)}
 
         {:ok, %{status: 404}} ->
           {:error, :not_found}
@@ -189,7 +210,7 @@ defmodule ExZarr.Storage.Backend.GCS do
     object_name = build_metadata_name(state.prefix)
 
     with {:ok, token} <- get_access_token(state.goth_name) do
-      url = "#{@upload_url}/b/#{state.bucket}/o"
+      url = "#{state.upload_url}/b/#{state.bucket}/o"
 
       case req().post(url,
              params: [uploadType: "media", name: object_name],
@@ -216,7 +237,7 @@ defmodule ExZarr.Storage.Backend.GCS do
     prefix = if state.prefix == "", do: "", else: "#{state.prefix}/"
 
     with {:ok, token} <- get_access_token(state.goth_name) do
-      url = "#{@base_url}/b/#{state.bucket}/o"
+      url = "#{state.base_url}/b/#{state.bucket}/o"
 
       case req().get(url,
              params: [prefix: prefix],
@@ -249,7 +270,8 @@ defmodule ExZarr.Storage.Backend.GCS do
     object_name = build_object_name(state.prefix, chunk_index)
 
     with {:ok, token} <- get_access_token(state.goth_name) do
-      url = "#{@base_url}/b/#{state.bucket}/o/#{URI.encode(object_name, &URI.char_unreserved?/1)}"
+      url =
+        "#{state.base_url}/b/#{state.bucket}/o/#{URI.encode(object_name, &URI.char_unreserved?/1)}"
 
       case req().delete(url, headers: [{"authorization", "Bearer #{token}"}]) do
         {:ok, %{status: status}} when status in 200..299 or status == 404 ->
@@ -269,7 +291,9 @@ defmodule ExZarr.Storage.Backend.GCS do
     with {:ok, bucket} <- fetch_required(config, :bucket),
          {:ok, goth_name} <- setup_goth(config),
          {:ok, token} <- get_access_token(goth_name) do
-      url = "#{@base_url}/b/#{bucket}"
+      endpoint_url = Keyword.get(config, :endpoint_url) || System.get_env("GCS_ENDPOINT_URL")
+      {base_url, _upload_url} = build_urls(endpoint_url)
+      url = "#{base_url}/b/#{bucket}"
 
       case req().get(url, headers: [{"authorization", "Bearer #{token}"}]) do
         {:ok, %{status: 200}} -> true
@@ -391,6 +415,18 @@ defmodule ExZarr.Storage.Backend.GCS do
     |> List.to_tuple()
   rescue
     _ -> nil
+  end
+
+  defp build_urls(nil) do
+    # Use default GCS URLs
+    {@base_url, @upload_url}
+  end
+
+  defp build_urls(endpoint_url) when is_binary(endpoint_url) do
+    # Use custom endpoint for fake-gcs-server or compatible services
+    base_url = "#{endpoint_url}/storage/v1"
+    upload_url = "#{endpoint_url}/upload/storage/v1"
+    {base_url, upload_url}
   end
 
   # Allow injection for testing

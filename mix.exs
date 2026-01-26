@@ -72,8 +72,9 @@ defmodule ExZarr.MixProject do
       {:ex_aws, "~> 2.5", optional: true},
       {:ex_aws_s3, "~> 2.5", optional: true},
       {:sweet_xml, "~> 0.7", optional: true},
-      {:azurex, "~> 1.1"},
       {:goth, "~> 1.4", optional: true},
+      {:google_api_storage, "~> 0.36", optional: true},
+      {:azurex, "~> 1.1"},
       {:req, "~> 0.4", optional: true},
 
       # Database storage backends (optional)

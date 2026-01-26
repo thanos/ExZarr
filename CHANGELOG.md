@@ -5,6 +5,102 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-01-25
+
+### Added
+
+#### Metadata Serialization and Deserialization
+- **Complete JSON encoding/decoding for Zarr v3 metadata**
+  - `MetadataV3.to_json/1` - Serialize metadata structures to JSON strings
+  - `MetadataV3.from_json/1` - Parse JSON to MetadataV3 structures
+  - Full support for chunk grids (regular and irregular)
+  - Full support for codec pipeline encoding (nested configurations)
+  - Full support for dimension names and storage transformers
+  - 54 new tests covering JSON serialization and zarr-python 3.x file compatibility
+
+#### Format Conversion
+- **Bidirectional conversion between Zarr v2 and v3 formats**
+  - `MetadataV3.from_v2/1` - Convert v2 metadata to v3 format
+  - `MetadataV3.to_v2/1` - Convert v3 metadata to v2 format (with validation)
+  - `ExZarr.FormatConverter` module - Convert entire arrays between formats
+  - `FormatConverter.convert/1` - Copy arrays with proper chunk key encoding
+  - `FormatConverter.check_v2_compatibility/1` - Pre-validate v3→v2 conversion
+  - Automatic handling of codec pipeline differences
+  - Clear error messages for incompatible features (sharding, irregular grids)
+  - 18 conversion tests including round-trip verification
+
+#### S3 Storage Backend Enhancements
+- **Localstack and minio support for local testing**
+  - Custom endpoint URL configuration
+  - Automatic parsing of `AWS_ENDPOINT_URL` environment variable
+  - ExAws configuration for S3-compatible services (scheme, host, port)
+  - 45 mock tests using Mox for fast CI/CD testing without AWS
+  - 31 integration tests with full localstack support
+  - Comprehensive testing guide (`test/ex_zarr/storage/S3_TESTING.md`)
+  - Example usage script (`examples/s3_storage.exs`)
+
+#### Dependencies
+- **sweet_xml ~> 0.7** - Required for ExAws.S3 XML parsing
+
+### Fixed
+
+#### Type Specifications
+- **MetadataV3.from_v2/1 return type** - Removed unreachable `{:error, term()}` case
+  - Function always succeeds with v2 metadata input
+  - Updated spec to match success typing: `{:ok, t()}`
+
+#### S3 Backend Configuration
+- **ExAws configuration for S3-compatible services**
+  - Fixed endpoint URL parsing from single string to ExAws format
+  - Corrected credential handling for localstack/minio
+  - Fixed `build_ex_aws_config/2` to parse URI components properly
+  - Resolved test setup issues with ExUnit callback return values
+
+### Changed
+
+#### Test Organization
+- **S3 integration tests** now properly skip when `AWS_ENDPOINT_URL` not configured
+- **setup_all callback** returns proper values for ExUnit compatibility
+- **Mock tests** run independently without requiring AWS services
+
+#### Documentation
+- **Updated S3 backend moduledoc** with localstack/minio configuration
+- **Created S3_TESTING.md** with complete setup and troubleshooting guide
+- **Updated examples** with S3 endpoint URL usage patterns
+
+### Testing
+
+**Test Coverage**
+- **Total tests**: 794 (up from 482 in v0.4.0)
+- **S3 mock tests**: 45 tests
+- **S3 integration tests**: 31 tests
+- **Format conversion tests**: 18 tests
+- **JSON serialization tests**: 54 tests
+- **Success rate**: 100% passing (0 failures, 3 skipped)
+- **Quality checks**: All passing (format, credo strict, dialyzer)
+
+### Technical Details
+
+#### Format Conversion Limitations
+- **v3 → v2 conversion** has known limitations detected by validation:
+  - Sharding codec not supported in v2 (rejected with clear error)
+  - Dimension names lost in conversion (documented)
+  - Irregular chunk grids not supported in v2 (rejected with clear error)
+  - Array→array codecs (transpose, quantize, bitround) dropped
+- **v2 → v3 conversion** fully supported without limitations
+
+#### S3 Configuration
+- **Endpoint URL parsing** converts HTTP URL to ExAws format:
+  - `http://localhost:4566` → `scheme: "http://", host: "localhost", port: 4566`
+  - Credentials from environment: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
+  - Region configuration: default `us-east-1` or specified
+- **Backward compatible** - works with real AWS S3 when endpoint not specified
+
+### Breaking Changes
+None - Full backward compatibility maintained with v0.1.0, v0.3.0, and v0.4.0
+
+---
+
 ## [0.1.0] - 2026-01-23
 
 ### Added
@@ -381,6 +477,7 @@ None - Full backward compatibility maintained with v2 arrays
 
 ---
 
+[0.5.0]: https://github.com/thanos/ex_zarr/releases/tag/v0.5.0
 [0.4.0]: https://github.com/thanos/ex_zarr/releases/tag/v0.4.0
 [0.3.0]: https://github.com/thanos/ex_zarr/releases/tag/v0.3.0
 [0.1.0]: https://github.com/thanos/ex_zarr/releases/tag/v0.1.0
