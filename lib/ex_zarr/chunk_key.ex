@@ -337,4 +337,279 @@ defmodule ExZarr.ChunkKey do
     chunk_key = encode(chunk_index, version)
     Path.join(base_path, chunk_key)
   end
+
+  defmodule Encoder do
+    @moduledoc """
+    Behavior for custom chunk key encoding schemes.
+
+    Implement this behavior to create custom chunk naming schemes beyond
+    the standard v2 (dot-separated) and v3 (slash-separated) formats.
+
+    ## Example
+
+        defmodule MyApp.CustomChunkKey do
+          @behaviour ExZarr.ChunkKey.Encoder
+
+          @impl true
+          def encode(chunk_index, _opts) do
+            # Custom encoding: "chunk_0_1_2" instead of "0.1.2"
+            indices = Tuple.to_list(chunk_index)
+            "chunk_" <> Enum.join(indices, "_")
+          end
+
+          @impl true
+          def decode(chunk_key, _opts) do
+            case String.split(chunk_key, "_") do
+              ["chunk" | indices] ->
+                tuple = indices |> Enum.map(&String.to_integer/1) |> List.to_tuple()
+                {:ok, tuple}
+              _ ->
+                {:error, :invalid_chunk_key}
+            end
+          end
+
+          @impl true
+          def pattern(_opts) do
+            ~r/^chunk_\\d+(_\\d+)*$/
+          end
+        end
+
+        # Register and use
+        ExZarr.ChunkKey.register_encoder(:custom, MyApp.CustomChunkKey)
+
+        # Use in array creation
+        {:ok, array} = ExZarr.Array.create(
+          shape: {100, 100},
+          chunk_key_encoding: :custom
+        )
+    """
+    @doc """
+    Encodes a chunk index tuple into a string key.
+
+    ## Parameters
+
+      * `chunk_index` - Tuple of integers representing chunk position
+      * `opts` - Keyword list of options
+
+    ## Returns
+
+    String representation of the chunk key
+    """
+    @callback encode(chunk_index :: tuple(), opts :: keyword()) :: String.t()
+
+    @doc """
+    Decodes a string key back into a chunk index tuple.
+
+    ## Parameters
+
+      * `chunk_key` - String representation of chunk key
+      * `opts` - Keyword list of options
+
+    ## Returns
+
+    `{:ok, chunk_index}` or `{:error, reason}`
+    """
+    @callback decode(chunk_key :: String.t(), opts :: keyword()) ::
+                {:ok, tuple()} | {:error, term()}
+
+    @doc """
+    Returns a regex pattern that matches valid chunk keys for this encoding.
+
+    ## Parameters
+
+      * `opts` - Keyword list of options
+
+    ## Returns
+
+    Regex pattern
+    """
+    @callback pattern(opts :: keyword()) :: Regex.t()
+  end
+
+  defmodule V2Encoder do
+    @moduledoc """
+    Default encoder for Zarr v2 format (dot-separated).
+    """
+    @behaviour ExZarr.ChunkKey.Encoder
+
+    @impl true
+    def encode(chunk_index, _opts), do: ExZarr.ChunkKey.encode(chunk_index, 2)
+
+    @impl true
+    def decode(chunk_key, _opts), do: ExZarr.ChunkKey.decode(chunk_key, 2)
+
+    @impl true
+    def pattern(_opts), do: ExZarr.ChunkKey.chunk_key_pattern(2)
+  end
+
+  defmodule V3Encoder do
+    @moduledoc """
+    Default encoder for Zarr v3 format (slash-separated with c/ prefix).
+    """
+    @behaviour ExZarr.ChunkKey.Encoder
+
+    @impl true
+    def encode(chunk_index, _opts), do: ExZarr.ChunkKey.encode(chunk_index, 3)
+
+    @impl true
+    def decode(chunk_key, _opts), do: ExZarr.ChunkKey.decode(chunk_key, 3)
+
+    @impl true
+    def pattern(_opts), do: ExZarr.ChunkKey.chunk_key_pattern(3)
+  end
+
+  defmodule Registry do
+    @moduledoc """
+    Encoder registry for managing custom chunk key encoders.
+
+    This Agent-based registry stores encoder modules that can be looked up by name.
+    """
+
+    use Agent
+
+    @doc """
+    Starts the encoder registry with default encoders.
+    """
+    def start_link(_opts) do
+      Agent.start_link(
+        fn ->
+          %{
+            v2: ExZarr.ChunkKey.V2Encoder,
+            v3: ExZarr.ChunkKey.V3Encoder,
+            default: ExZarr.ChunkKey.V2Encoder
+          }
+        end,
+        name: __MODULE__
+      )
+    end
+
+    @doc """
+    Registers a custom encoder module.
+    """
+    @spec register(atom(), module()) :: :ok
+    def register(name, encoder_module) do
+      Agent.update(__MODULE__, &Map.put(&1, name, encoder_module))
+    end
+
+    @doc """
+    Retrieves an encoder module by name.
+    """
+    @spec get(atom()) :: {:ok, module()} | {:error, :not_found}
+    def get(name) do
+      case Agent.get(__MODULE__, &Map.get(&1, name)) do
+        nil -> {:error, :not_found}
+        encoder_module -> {:ok, encoder_module}
+      end
+    end
+
+    def child_spec(opts) do
+      %{
+        id: __MODULE__,
+        start: {__MODULE__, :start_link, [opts]},
+        type: :worker,
+        restart: :permanent
+      }
+    end
+  end
+
+  @doc """
+  Registers a custom chunk key encoder.
+
+  ## Parameters
+
+    * `name` - Atom identifier for the encoder
+    * `encoder_module` - Module implementing the `ExZarr.ChunkKey.Encoder` behavior
+
+  ## Examples
+
+      defmodule MyEncoder do
+        @behaviour ExZarr.ChunkKey.Encoder
+        # ... implement callbacks ...
+      end
+
+      ExZarr.ChunkKey.register_encoder(:my_format, MyEncoder)
+  """
+  @spec register_encoder(atom(), module()) :: :ok
+  def register_encoder(name, encoder_module) do
+    Registry.register(name, encoder_module)
+  end
+
+  @doc """
+  Encodes a chunk index using a named encoder.
+
+  Falls back to version-based encoding if encoder not found.
+
+  ## Parameters
+
+    * `chunk_index` - Tuple of integers
+    * `encoder_name` - Atom identifying the encoder, or version number (2 | 3)
+    * `opts` - Options to pass to encoder
+
+  ## Examples
+
+      ExZarr.ChunkKey.encode_with({0, 1, 2}, :custom, [])
+      "chunk_0_1_2"
+
+      ExZarr.ChunkKey.encode_with({0, 1}, :v2, [])
+      "0.1"
+  """
+  @spec encode_with(chunk_index(), atom() | version(), keyword()) :: chunk_key()
+  def encode_with(chunk_index, encoder_name, opts \\ [])
+
+  # Handle version numbers directly
+  def encode_with(chunk_index, version, _opts) when is_integer(version) do
+    encode(chunk_index, version)
+  end
+
+  # Handle named encoders
+  def encode_with(chunk_index, encoder_name, opts) when is_atom(encoder_name) do
+    case Registry.get(encoder_name) do
+      {:ok, encoder_module} ->
+        encoder_module.encode(chunk_index, opts)
+
+      {:error, :not_found} ->
+        # Fallback to v2 encoding
+        encode(chunk_index, 2)
+    end
+  end
+
+  @doc """
+  Decodes a chunk key using a named encoder.
+
+  Falls back to version-based decoding if encoder not found.
+
+  ## Parameters
+
+    * `chunk_key` - String representation
+    * `encoder_name` - Atom identifying the encoder, or version number (2 | 3)
+    * `opts` - Options to pass to encoder
+
+  ## Examples
+
+      ExZarr.ChunkKey.decode_with("chunk_0_1_2", :custom, [])
+      {:ok, {0, 1, 2}}
+
+      ExZarr.ChunkKey.decode_with("0.1", :v2, [])
+      {:ok, {0, 1}}
+  """
+  @spec decode_with(chunk_key(), atom() | version(), keyword()) ::
+          {:ok, chunk_index()} | {:error, term()}
+  def decode_with(chunk_key, encoder_name, opts \\ [])
+
+  # Handle version numbers directly
+  def decode_with(chunk_key, version, _opts) when is_integer(version) do
+    decode(chunk_key, version)
+  end
+
+  # Handle named encoders
+  def decode_with(chunk_key, encoder_name, opts) when is_atom(encoder_name) do
+    case Registry.get(encoder_name) do
+      {:ok, encoder_module} ->
+        encoder_module.decode(chunk_key, opts)
+
+      {:error, :not_found} ->
+        # Try v2 decoding as fallback
+        decode(chunk_key, 2)
+    end
+  end
 end

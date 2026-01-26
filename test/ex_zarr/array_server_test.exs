@@ -166,31 +166,47 @@ defmodule ExZarr.ArrayServerTest do
     test "processes queue in FIFO order", %{server: server} do
       chunk = {0, 0}
 
+      # Use Agent to track acquisition order
+      {:ok, order_agent} = Agent.start_link(fn -> [] end)
+
       # Acquire write lock
       assert :ok = ArrayServer.lock_chunk(server, chunk, :write)
 
-      # Spawn multiple queued requests
+      # Spawn multiple queued requests with staggered delays to ensure queue order
       tasks =
         for i <- 1..5 do
           Task.async(fn ->
+            # Small staggered delay to ensure tasks queue in order
+            Process.sleep(i * 5)
             :ok = ArrayServer.lock_chunk(server, chunk, :write, 10_000)
-            {i, System.monotonic_time(:millisecond)}
+            # Record order of acquisition
+            Agent.update(order_agent, fn list -> list ++ [i] end)
+            # Hold lock briefly to ensure distinct acquisition times
+            Process.sleep(10)
+            :ok = ArrayServer.unlock_chunk(server, chunk)
+            i
           end)
         end
 
-      # Give tasks time to queue
-      Process.sleep(100)
+      # Give all tasks time to queue (5 tasks * 5ms + buffer)
+      Process.sleep(150)
 
-      # Release lock and measure order
+      # Release initial lock to start queue processing
       ArrayServer.unlock_chunk(server, chunk)
 
+      # Wait for all tasks to complete
       results = Task.await_many(tasks, 15_000)
 
-      # Extract completion order
-      completion_times = Enum.map(results, fn {_i, time} -> time end)
+      # Get the actual acquisition order
+      acquisition_order = Agent.get(order_agent, & &1)
+      Agent.stop(order_agent)
 
-      # Times should be monotonically increasing (FIFO order)
-      assert completion_times == Enum.sort(completion_times)
+      # Verify FIFO: tasks should acquire locks in the order they requested
+      assert acquisition_order == [1, 2, 3, 4, 5],
+             "Expected FIFO order [1,2,3,4,5], got #{inspect(acquisition_order)}"
+
+      # Verify all tasks completed
+      assert Enum.sort(results) == [1, 2, 3, 4, 5]
     end
   end
 
