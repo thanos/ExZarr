@@ -23,8 +23,8 @@ defmodule ExZarr.Storage.Backend.Mnesia do
 
   ```elixir
   # In your application startup
-  :mnesia.create_schema([node()])
-  :mnesia.start()
+  mnesia().create_schema([node()])
+  mnesia().start()
   ```
 
   ## Example
@@ -125,7 +125,7 @@ defmodule ExZarr.Storage.Backend.Mnesia do
 
       # Verify table exists
       try do
-        case :mnesia.table_info(table_name, :size) do
+        case mnesia().table_info(table_name, :size) do
           {:badrpc, _} ->
             {:error, :table_not_found}
 
@@ -148,7 +148,7 @@ defmodule ExZarr.Storage.Backend.Mnesia do
     key = {state.array_id, {:chunk, chunk_index}}
 
     case mnesia_transaction(fn ->
-           :mnesia.read(state.table_name, key)
+           mnesia().read(state.table_name, key)
          end) do
       {:ok, [{_table, ^key, data}]} ->
         {:ok, data}
@@ -167,7 +167,7 @@ defmodule ExZarr.Storage.Backend.Mnesia do
     record = {state.table_name, key, data}
 
     case mnesia_transaction(fn ->
-           :mnesia.write(record)
+           mnesia().write(record)
          end) do
       {:ok, :ok} ->
         :ok
@@ -182,7 +182,7 @@ defmodule ExZarr.Storage.Backend.Mnesia do
     key = {state.array_id, :metadata}
 
     case mnesia_transaction(fn ->
-           :mnesia.read(state.table_name, key)
+           mnesia().read(state.table_name, key)
          end) do
       {:ok, [{_table, ^key, metadata}]} ->
         {:ok, metadata}
@@ -201,7 +201,7 @@ defmodule ExZarr.Storage.Backend.Mnesia do
     record = {state.table_name, key, metadata}
 
     case mnesia_transaction(fn ->
-           :mnesia.write(record)
+           mnesia().write(record)
          end) do
       {:ok, :ok} ->
         :ok
@@ -216,7 +216,7 @@ defmodule ExZarr.Storage.Backend.Mnesia do
     pattern = {state.table_name, {state.array_id, {:chunk, :"$1"}}, :_}
 
     case mnesia_transaction(fn ->
-           :mnesia.select(state.table_name, [{pattern, [], [:"$1"]}])
+           mnesia().select(state.table_name, [{pattern, [], [:"$1"]}])
          end) do
       {:ok, chunk_indices} ->
         {:ok, chunk_indices}
@@ -231,7 +231,7 @@ defmodule ExZarr.Storage.Backend.Mnesia do
     key = {state.array_id, {:chunk, chunk_index}}
 
     case mnesia_transaction(fn ->
-           :mnesia.delete(state.table_name, key, :write)
+           mnesia().delete(state.table_name, key, :write)
          end) do
       {:ok, :ok} ->
         :ok
@@ -247,7 +247,7 @@ defmodule ExZarr.Storage.Backend.Mnesia do
 
     try do
       # Check if table exists
-      :mnesia.table_info(table_name, :size)
+      mnesia().table_info(table_name, :size)
       true
     rescue
       _ -> false
@@ -276,16 +276,16 @@ defmodule ExZarr.Storage.Backend.Mnesia do
   end
 
   defp ensure_mnesia_started do
-    case :mnesia.system_info(:is_running) do
+    case mnesia().system_info(:is_running) do
       :yes ->
         :ok
 
       :no ->
-        :mnesia.start()
+        mnesia().start()
         :ok
 
       _ ->
-        :mnesia.start()
+        mnesia().start()
         :ok
     end
   end
@@ -301,7 +301,7 @@ defmodule ExZarr.Storage.Backend.Mnesia do
       end
 
     # Try to create table - will fail if it already exists
-    case :mnesia.create_table(table_name, [attributes: attributes] ++ storage_type) do
+    case mnesia().create_table(table_name, [attributes: attributes] ++ storage_type) do
       {:atomic, :ok} ->
         :ok
 
@@ -314,9 +314,14 @@ defmodule ExZarr.Storage.Backend.Mnesia do
   end
 
   defp mnesia_transaction(fun) do
-    case :mnesia.transaction(fun) do
+    case mnesia().transaction(fun) do
       {:atomic, result} -> {:ok, result}
       {:aborted, reason} -> {:error, reason}
     end
+  end
+
+  # Allow injection for testing
+  defp mnesia do
+    Application.get_env(:ex_zarr, :mnesia_module, :mnesia)
   end
 end
