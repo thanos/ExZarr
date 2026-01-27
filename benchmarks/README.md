@@ -234,5 +234,5 @@ When adding new benchmarks:
 
 ## See Also
 
-- [Performance Guide](../guides/performance.md) - Optimization recommendations
-- [Performance Improvements](../PERFORMANCE_IMPROVEMENTS.md) - Technical details of v0.8.0 optimizations
+- [Performance Guide](performance.md) - Optimization recommendations
+- [Performance Improvements](PERFORMANCE_IMPROVEMENTS.md) - Technical details of v0.8.0 optimizations

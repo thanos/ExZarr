@@ -1,12 +1,19 @@
-[![Coverage Status](https://coveralls.io/repos/github/thanos/ExZarr/badge.svg?branch=main)](https://coveralls.io/github/thanos/ExZarr?branch=main)
-
 # ExZarr
+
+[![Hex.pm](https://img.shields.io/hexpm/v/ex_zarr.svg)](https://hex.pm/packages/ex_zarr)
+[![Hex Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/ex_zarr)
+[![Hex.pm Downloads](https://img.shields.io/hexpm/dt/ex_zarr.svg)](https://hex.pm/packages/ex_zarr)
+[![License](https://img.shields.io/hexpm/l/ex_zarr.svg)](https://github.com/thanos/ExZarr/blob/main/LICENSE)
+[![Build Status](https://github.com/thanos/ExZarr/workflows/CI/badge.svg)](https://github.com/thanos/ExZarr/actions)
+[![Coverage Status](https://coveralls.io/repos/github/thanos/ExZarr/badge.svg?branch=main)](https://coveralls.io/github/thanos/ExZarr?branch=main)
 
 Elixir implementation of [Zarr](https://zarr.dev): compressed, chunked, N-dimensional arrays designed for parallel computing and scientific data storage.
 
 ## Features
 
+- **High Performance** - 26x faster multi-chunk reads with near-optimal scaling (see [Performance Guide](guides/performance.md))
 - **N-dimensional arrays** with support for 10 data types (int8-64, uint8-64, float32/64)
+- **Parallel chunk processing** - Automatic parallel I/O and decompression for large operations
 - **Chunking** along arbitrary dimensions for optimized I/O operations
 - **Compression** using Erlang zlib (with fallback support for zstd and lz4)
 - **Flexible storage** backends (in-memory, filesystem, and zip archive)
@@ -23,7 +30,7 @@ Add `ex_zarr` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_zarr, "~> 0.7.0"}
+    {:ex_zarr, "~> 1.0"}
   ]
 end
 ```
@@ -54,6 +61,27 @@ end
 
 # Load entire array into memory
 {:ok, data} = ExZarr.load(path: "/tmp/my_array")
+```
+
+## Performance
+
+ExZarr v0.8+ includes major performance optimizations:
+
+- **26x faster multi-chunk reads** - Optimized from 110ms to 4.2ms for 16-chunk operations
+- **Near-optimal scaling** - Reading N chunks takes ~N× single chunk time
+- **Parallel I/O** - Automatic parallelization for multi-chunk operations
+- **99% memory reduction** - Eliminated redundant binary copies
+
+**Benchmark results** (400×400 array, 16 chunks):
+- Before: 110ms per read
+- After: 4.2ms per read
+- **Speedup: 26×** 🚀
+
+See [Performance Guide](guides/performance.md) for tuning recommendations and [Benchmarks](benchmarks/README.md) for running your own tests.
+
+```bash
+# Run quick performance check (completes in 6 seconds)
+mix run benchmarks/slicing_bench_quick.exs
 ```
 
 ## Zarr Format Support

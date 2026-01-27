@@ -1,7 +1,7 @@
 defmodule ExZarr.MixProject do
   use Mix.Project
 
-  @version "0.7.0"
+  @version "1.0.0"
   @source_url "https://github.com/thanos/ExZarr"
 
   def project do
@@ -80,6 +80,9 @@ defmodule ExZarr.MixProject do
       # Database storage backends (optional)
       {:mongodb_driver, "~> 1.4", optional: true},
 
+      # Observability
+      {:telemetry, "~> 1.2"},
+
       # Documentation
       {:ex_doc, "~> 0.31", only: :dev, runtime: false}
     ] ++
@@ -89,7 +92,8 @@ defmodule ExZarr.MixProject do
         {:excoveralls, "~> 0.18", only: :test},
         {:stream_data, "~> 1.1", only: [:dev, :test]},
         {:mox, "~> 1.1", only: :test},
-        {:benchee, "~> 1.3", only: :dev}
+        {:benchee, "~> 1.3", only: :dev},
+        {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false, warn_if_outdated: true}
       ]
   end
 
@@ -123,13 +127,21 @@ defmodule ExZarr.MixProject do
         "README.md",
         "CHANGELOG.md",
         "INTEROPERABILITY.md",
+        "PERFORMANCE_IMPROVEMENTS.md",
+        "SECURITY.md",
         "docs/V2_TO_V3_MIGRATION.md",
         "guides/getting_started.md",
         "guides/advanced_usage.md",
-        "guides/migration_from_python.md"
+        "guides/migration_from_python.md",
+        "guides/performance.md",
+        "guides/telemetry.md",
+        "guides/error_handling.md",
+        "benchmarks/README.md"
       ],
       groups_for_extras: [
-        Guides: ~r/INTEROPERABILITY/,
+        Guides: ~r/guides\//,
+        Performance: ~r/PERFORMANCE_IMPROVEMENTS|benchmarks/,
+        Security: ~r/SECURITY/,
         "Release Notes": ~r/CHANGELOG/
       ],
       source_ref: "v#{@version}",

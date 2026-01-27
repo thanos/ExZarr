@@ -491,7 +491,7 @@ data = <<0::size(total_bytes)-unit(8)>>
 - [Zarr Specification](https://zarr-specs.readthedocs.io/)
 - [Blosc Documentation](https://www.blosc.org/)
 - [Elixir Performance](https://hexdocs.pm/elixir/performance.html)
-- [ExZarr Examples](../examples/)
+- [ExZarr Examples](https://github.com/thanos/ExZarr/tree/main/examples)
 
 ## Contributing
 

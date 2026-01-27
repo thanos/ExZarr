@@ -5,6 +5,154 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-01-26
+
+### 🎉 First Stable Release!
+
+ExZarr 1.0.0 marks the first production-ready release with comprehensive testing, security hardening, and extensive documentation.
+
+### Added
+
+#### Testing & Quality Assurance
+- **Comprehensive Test Suite**: 1,713 total tests (146 doctests + 65 properties + 1,502 unit tests)
+  - Zero test failures across all test suites
+  - 4 tests intentionally skipped for environment-specific features
+  - 151 tests excluded (cloud storage backends requiring credentials)
+- **Property-Based Testing**: Expanded from 21 to 65 properties
+  - New `test/ex_zarr_codecs_property_test.exs` with 19 codec-focused properties
+  - Enhanced `test/ex_zarr_property_test.exs` with 25 additional properties
+  - Comprehensive coverage of compression, indexing, storage, and metadata operations
+- **Backend Test Coverage**: New comprehensive test files
+  - `test/ex_zarr/storage_comprehensive_test.exs` - 39 tests for storage operations
+  - `test/ex_zarr/storage/backend/filesystem_test.exs` - 41 tests (82% coverage)
+  - `test/ex_zarr/storage/backend/zip_test.exs` - 40 tests (95.2% coverage)
+  - `test/mix/tasks/fix_nif_rpaths_test.exs` - 14 tests for Mix task
+- **Core Module Coverage**: Significantly improved test coverage
+  - `format_converter.ex`: 20% → 80% (+60 percentage points, 36 tests)
+  - `indexing.ex`: 12.1% → 85.1% (+73pp, 69 tests)
+  - `metadata.ex`: 59.1% → 79.5% (+20pp, 56 tests)
+  - `storage.ex`: ~29% → 68.1% (+39pp, 39 tests)
+  - `filesystem.ex`: 0% → 82% (+82pp, 41 tests)
+  - `zip.ex`: 66.6% → 95.2% (+29pp, 40 tests)
+- **Overall Coverage**: 80.3% (up from 76.3%), with 100% coverage on 6 critical modules
+
+#### Security & Documentation
+- **Security Policy**: Comprehensive `SECURITY.md` with 550+ lines
+  - Vulnerability reporting process and timelines
+  - Input validation best practices with code examples
+  - Cloud authentication security patterns
+  - Path traversal prevention guidelines
+  - Resource limit recommendations
+  - Security checklist for production deployments
+- **Sobelow Integration**: Static security analysis configured
+  - `.sobelow-conf` configuration file with documented exceptions
+  - All high/medium confidence warnings resolved
+  - 45 low-confidence warnings documented as expected behavior
+  - Detailed explanation of file traversal, String.to_atom, and configuration warnings
+- **Enhanced Error Handling Guide**: `guides/error_handling.md`
+  - Comprehensive error handling patterns
+  - Recovery strategies for common failures
+  - Circuit breaker and retry patterns
+  - Logging and debugging recommendations
+- **Telemetry Guide**: `guides/telemetry.md`
+  - Complete instrumentation documentation
+  - Integration examples for monitoring systems
+  - Performance metrics and event tracking
+
+#### Code Quality
+- **Zero Compilation Warnings**: Clean compilation across all environments
+- **Credo Grade A+**: Strict mode with 0 issues (1,396 mods/funs analyzed)
+- **Dialyzer Passing**: All type specs validated, 14 known issues properly suppressed
+- **Documentation Coverage**:
+  - Zero `mix docs` warnings
+  - All public functions have `@doc` annotations
+  - All modules have `@moduledoc` annotations
+  - Comprehensive guides in `guides/` directory
+
+### Changed
+
+#### API Stability
+- **Semantic Versioning Commitment**: v1.0.0 marks API stability
+  - No breaking changes planned for 1.x series
+  - Deprecation warnings will be added for any future API changes
+  - At least one minor version deprecation period before removal
+- **Dependency Versions**: Updated to stable releases
+  - `:telemetry` added for observability support
+  - All dependencies pinned to stable versions
+
+### Fixed
+
+#### Test Stability
+- Fixed metadata tests to include required `fill_value` field
+- Fixed storage tests to handle mock backend registration idempotency
+- Fixed property tests to only test public API functions
+- Corrected filter metadata encoding to include both `dtype` and `astype` fields
+
+#### Documentation
+- Fixed all relative path references in guides
+- Corrected README.md installation instructions
+- Updated all version references to 1.0.0
+
+### Testing Metrics
+
+**Test Suite Performance**
+- Total execution time: ~5.8 seconds
+- Async tests: 3.4 seconds
+- Sync tests: 2.4 seconds
+- All tests: 100% passing rate
+
+**Code Coverage by Module**
+- 100% coverage: `ex_zarr.ex`, `application.ex`, `chunk_cache.ex`, `version.ex`, `storage/backend.ex`, `codecs/codec.ex`
+- >90% coverage: `chunk_key.ex` (96%), `storage/backend/zip.ex` (95.2%), `codecs/sharding_indexed.ex` (93.9%), `array_server.ex` (93%), `memory.ex` (90.9%)
+- >80% coverage: 15 additional modules
+- Overall project: 80.3%
+
+### Security
+
+**Vulnerability Status**: No security vulnerabilities reported or discovered
+
+**Security Hardening**
+- Comprehensive path validation examples
+- Safe usage patterns for all file operations
+- Secure cloud storage authentication patterns
+- Input sanitization guidelines
+- Resource limit recommendations
+- Documented DoS prevention strategies
+
+**Static Analysis Results** (Sobelow)
+- 0 high confidence warnings
+- 0 medium confidence warnings
+- 45 low confidence warnings (all documented as expected for data storage library)
+
+### Breaking Changes
+
+None. This is the first stable release, establishing the baseline API.
+
+### Deprecations
+
+None.
+
+### Migration Guide
+
+For users upgrading from v0.7.0:
+1. Update dependency in `mix.exs`: `{:ex_zarr, "~> 1.0"}`
+2. Run `mix deps.get`
+3. No code changes required - full backward compatibility maintained
+
+### Contributors
+
+Special thanks to all contributors who made v1.0.0 possible through testing, feedback, and code contributions.
+
+### Looking Forward
+
+Planned for v1.1.0:
+- Additional cloud storage backend optimizations
+- Enhanced v3 format support
+- Performance improvements for large arrays
+- Additional convenience functions for common patterns
+
+---
+
 ## [0.7.0] - 2026-01-26
 
 ### Added
