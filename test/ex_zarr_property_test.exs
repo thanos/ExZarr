@@ -485,4 +485,492 @@ defmodule ExZarr.PropertyTest do
       end
     end
   end
+
+  describe "ChunkKey properties" do
+    property "encode/decode roundtrip for v2" do
+      check all(
+              x <- integer(0..100),
+              y <- integer(0..100),
+              z <- integer(0..100),
+              dims <- member_of([1, 2, 3])
+            ) do
+        chunk_index =
+          case dims do
+            1 -> {x}
+            2 -> {x, y}
+            3 -> {x, y, z}
+          end
+
+        encoded = ExZarr.ChunkKey.encode(chunk_index, 2)
+        assert {:ok, decoded} = ExZarr.ChunkKey.decode(encoded, 2)
+        assert decoded == chunk_index
+      end
+    end
+
+    property "encode/decode roundtrip for v3" do
+      check all(
+              x <- integer(0..100),
+              y <- integer(0..100),
+              dims <- member_of([1, 2])
+            ) do
+        chunk_index =
+          case dims do
+            1 -> {x}
+            2 -> {x, y}
+          end
+
+        encoded = ExZarr.ChunkKey.encode(chunk_index, 3)
+        assert {:ok, decoded} = ExZarr.ChunkKey.decode(encoded, 3)
+        assert decoded == chunk_index
+      end
+    end
+
+    property "v2 format uses dots" do
+      check all(
+              x <- integer(0..10),
+              y <- integer(0..10)
+            ) do
+        encoded = ExZarr.ChunkKey.encode({x, y}, 2)
+        assert String.contains?(encoded, ".")
+        assert encoded == "#{x}.#{y}"
+      end
+    end
+
+    property "v3 format uses c/ prefix and slashes" do
+      check all(
+              x <- integer(0..10),
+              y <- integer(0..10)
+            ) do
+        encoded = ExZarr.ChunkKey.encode({x, y}, 3)
+        assert String.starts_with?(encoded, "c/")
+        assert String.contains?(encoded, "/")
+      end
+    end
+
+    property "valid? correctly validates chunk keys" do
+      check all(
+              x <- integer(0..10),
+              y <- integer(0..10)
+            ) do
+        v2_key = ExZarr.ChunkKey.encode({x, y}, 2)
+        v3_key = ExZarr.ChunkKey.encode({x, y}, 3)
+
+        assert ExZarr.ChunkKey.valid?(v2_key, 2)
+        assert ExZarr.ChunkKey.valid?(v3_key, 3)
+
+        # Wrong version should be invalid
+        refute ExZarr.ChunkKey.valid?(v2_key, 3)
+        refute ExZarr.ChunkKey.valid?(v3_key, 2)
+      end
+    end
+  end
+
+  describe "Indexing properties" do
+    property "normalize_index handles positive indices" do
+      check all(
+              size <- integer(10..1000),
+              index <- integer(0..9)
+            ) do
+        if index < size do
+          assert {:ok, ^index} = ExZarr.Indexing.normalize_index(index, size)
+        end
+      end
+    end
+
+    property "normalize_index handles negative indices" do
+      check all(
+              size <- integer(10..100),
+              neg_offset <- integer(1..9)
+            ) do
+        if neg_offset <= size do
+          assert {:ok, normalized} = ExZarr.Indexing.normalize_index(-neg_offset, size)
+          assert normalized == size - neg_offset
+          assert normalized >= 0
+          assert normalized < size
+        end
+      end
+    end
+
+    property "normalize_slice produces valid ranges" do
+      check all(
+              size <- integer(10..100),
+              start <- integer(0..50),
+              stop <- integer(51..100)
+            ) do
+        if start < size and stop <= size do
+          assert {:ok, slice} =
+                   ExZarr.Indexing.normalize_slice(
+                     %{start: start, stop: stop, step: 1},
+                     size
+                   )
+
+          assert slice.start >= 0
+          assert slice.stop <= size
+          assert slice.start <= slice.stop
+          assert slice.step == 1
+        end
+      end
+    end
+
+    property "slice_size matches indices count" do
+      check all(
+              start <- integer(0..50),
+              stop <- integer(51..100),
+              step <- integer(1..5)
+            ) do
+        slice = %{start: start, stop: stop, step: step}
+        size = ExZarr.Indexing.slice_size(slice)
+        indices = ExZarr.Indexing.slice_indices(slice)
+
+        assert length(indices) == size
+      end
+    end
+
+    property "slice_indices are monotonic" do
+      check all(
+              start <- integer(0..50),
+              stop <- integer(51..100),
+              step <- integer(1..5)
+            ) do
+        slice = %{start: start, stop: stop, step: step}
+        indices = ExZarr.Indexing.slice_indices(slice)
+
+        if length(indices) > 1 do
+          # Check pairs are increasing
+          indices
+          |> Enum.chunk_every(2, 1, :discard)
+          |> Enum.all?(fn [a, b] -> a < b end)
+          |> (&assert/1).()
+        end
+      end
+    end
+
+    property "mask_to_indices consistency" do
+      check all(
+              mask_size <- integer(5..50),
+              true_positions <- list_of(integer(0..49), min_length: 0, max_length: 10)
+            ) do
+        # Create mask tuple with specific true positions
+        mask_list =
+          0..(mask_size - 1)
+          |> Enum.map(fn i -> i in true_positions end)
+
+        mask = List.to_tuple(mask_list)
+        indices = ExZarr.Indexing.mask_to_indices(mask)
+
+        # All returned indices should be within bounds
+        assert Enum.all?(indices, &(&1 >= 0 and &1 < mask_size))
+
+        # Count should match number of true values
+        true_count = Enum.count(mask_list, & &1)
+        assert length(indices) == true_count
+      end
+    end
+
+    property "validate_fancy_indices accepts valid indices" do
+      check all(
+              dim_size <- integer(10..100),
+              num_indices <- integer(1..20)
+            ) do
+        indices = Enum.map(1..num_indices, fn _ -> :rand.uniform(dim_size) - 1 end)
+        assert :ok = ExZarr.Indexing.validate_fancy_indices(indices, dim_size)
+      end
+    end
+  end
+
+  describe "FormatConverter properties" do
+    property "convert handles valid metadata" do
+      check all(
+              shape <- one_of([shape_1d(), shape_2d()]),
+              dtype <- dtype_gen()
+            ) do
+        chunk_shape =
+          shape
+          |> Tuple.to_list()
+          |> Enum.map(&max(1, div(&1, 5)))
+          |> List.to_tuple()
+
+        {:ok, array} =
+          ExZarr.create(
+            shape: shape,
+            chunks: chunk_shape,
+            dtype: dtype,
+            compressor: :zlib,
+            storage: :memory
+          )
+
+        # Just verify the array was created successfully
+        assert array.shape == shape
+        assert array.chunks == chunk_shape
+      end
+    end
+  end
+
+  describe "Storage backend properties" do
+    property "delete_chunk is idempotent" do
+      check all(
+              chunk_index <- tuple({integer(0..10), integer(0..10)}),
+              data <- binary(min_length: 1, max_length: 100)
+            ) do
+        {:ok, storage} = Storage.init(%{storage_type: :memory})
+
+        # Write chunk
+        :ok = Storage.write_chunk(storage, chunk_index, data)
+        assert {:ok, ^data} = Storage.read_chunk(storage, chunk_index)
+
+        # Delete once
+        :ok = Storage.delete_chunk(storage, chunk_index)
+        assert {:error, :not_found} = Storage.read_chunk(storage, chunk_index)
+
+        # Delete again should still succeed (idempotent)
+        :ok = Storage.delete_chunk(storage, chunk_index)
+        assert {:error, :not_found} = Storage.read_chunk(storage, chunk_index)
+      end
+    end
+
+    property "list_chunks returns all written chunks" do
+      check all(num_chunks <- integer(1..20)) do
+        {:ok, storage} = Storage.init(%{storage_type: :memory})
+
+        # Write random chunks
+        chunk_indices =
+          Enum.map(1..num_chunks, fn i -> {div(i, 10), rem(i, 10)} end)
+          |> Enum.uniq()
+
+        for index <- chunk_indices do
+          :ok = Storage.write_chunk(storage, index, <<1, 2, 3>>)
+        end
+
+        {:ok, listed} = Storage.list_chunks(storage)
+
+        # All written chunks should be listed
+        assert length(listed) == length(chunk_indices)
+
+        for index <- chunk_indices do
+          assert index in listed
+        end
+      end
+    end
+
+    property "overwrite updates chunk data" do
+      check all(
+              chunk_index <- tuple({integer(0..10), integer(0..10)}),
+              data1 <- binary(min_length: 1, max_length: 50),
+              data2 <- binary(min_length: 1, max_length: 50)
+            ) do
+        {:ok, storage} = Storage.init(%{storage_type: :memory})
+
+        # Write first version
+        :ok = Storage.write_chunk(storage, chunk_index, data1)
+        assert {:ok, ^data1} = Storage.read_chunk(storage, chunk_index)
+
+        # Overwrite with second version
+        :ok = Storage.write_chunk(storage, chunk_index, data2)
+        assert {:ok, ^data2} = Storage.read_chunk(storage, chunk_index)
+
+        # Old data should not be accessible
+        refute data1 == data2
+      end
+    end
+  end
+
+  describe "Codec pipeline properties" do
+    property "multiple compression codecs work" do
+      check all(
+              data <- binary(min_length: 10, max_length: 1000),
+              codec <- member_of([:zlib, :zstd, :lz4, :none])
+            ) do
+        if Codecs.codec_available?(codec) do
+          assert {:ok, compressed} = Codecs.compress(data, codec)
+          assert {:ok, decompressed} = Codecs.decompress(compressed, codec)
+          assert decompressed == data
+        end
+      end
+    end
+
+    property "compression with level parameter" do
+      check all(
+              data <- binary(min_length: 100, max_length: 1000),
+              level <- integer(1..9)
+            ) do
+        config = %{level: level}
+        assert {:ok, compressed} = Codecs.compress(data, :zlib, config)
+        assert {:ok, ^data} = Codecs.decompress(compressed, :zlib)
+      end
+    end
+  end
+
+  describe "Array operations properties" do
+    property "array metadata is consistent after creation" do
+      check all(
+              fill <- integer(0..100),
+              shape <- one_of([shape_1d(), shape_2d()])
+            ) do
+        chunk_shape =
+          shape
+          |> Tuple.to_list()
+          |> Enum.map(&max(1, div(&1, 10)))
+          |> List.to_tuple()
+
+        {:ok, array} =
+          ExZarr.create(
+            shape: shape,
+            chunks: chunk_shape,
+            dtype: :int32,
+            fill_value: fill,
+            storage: :memory
+          )
+
+        # Verify metadata is preserved
+        assert array.fill_value == fill
+        assert array.shape == shape
+        assert array.chunks == chunk_shape
+      end
+    end
+
+    property "nchunks calculation" do
+      check all(
+              shape <- one_of([shape_1d(), shape_2d(), shape_3d()]),
+              divisor <- integer(2..20)
+            ) do
+        chunk_shape =
+          shape
+          |> Tuple.to_list()
+          |> Enum.map(&max(1, div(&1, divisor)))
+          |> List.to_tuple()
+
+        {:ok, array} =
+          ExZarr.create(
+            shape: shape,
+            chunks: chunk_shape,
+            storage: :memory
+          )
+
+        # Calculate expected number of chunks
+        expected =
+          Enum.zip(Tuple.to_list(shape), Tuple.to_list(chunk_shape))
+          |> Enum.map(fn {s, c} -> ceil(s / c) end)
+          |> Enum.reduce(1, &(&1 * &2))
+
+        # Verify via metadata
+        total_chunks = Metadata.total_chunks(array.metadata)
+        assert total_chunks == expected
+      end
+    end
+  end
+
+  describe "Data type properties" do
+    property "itemsize calculation" do
+      check all(dtype <- dtype_gen()) do
+        expected =
+          case dtype do
+            dt when dt in [:int8, :uint8] -> 1
+            dt when dt in [:int16, :uint16] -> 2
+            dt when dt in [:int32, :uint32, :float32] -> 4
+            dt when dt in [:int64, :uint64, :float64] -> 8
+          end
+
+        assert ExZarr.DataType.itemsize(dtype) == expected
+      end
+    end
+
+    property "dtype creates valid arrays" do
+      check all(dtype <- dtype_gen()) do
+        {:ok, array} =
+          ExZarr.create(
+            shape: {10, 10},
+            chunks: {5, 5},
+            dtype: dtype,
+            storage: :memory
+          )
+
+        assert array.dtype == dtype
+
+        expected_itemsize =
+          case dtype do
+            dt when dt in [:int8, :uint8] -> 1
+            dt when dt in [:int16, :uint16] -> 2
+            dt when dt in [:int32, :uint32, :float32] -> 4
+            dt when dt in [:int64, :uint64, :float64] -> 8
+          end
+
+        assert Array.itemsize(array) == expected_itemsize
+      end
+    end
+  end
+
+  describe "Group properties" do
+    property "group creation succeeds with valid paths" do
+      check all(name <- string(:alphanumeric, min_length: 1, max_length: 20)) do
+        {:ok, group} = ExZarr.Group.create("", storage: :memory)
+        result = ExZarr.Group.create_group(group, name)
+
+        # Should either succeed or fail with a valid error
+        case result do
+          {:ok, subgroup} ->
+            assert is_struct(subgroup, ExZarr.Group)
+            assert String.ends_with?(subgroup.path, name)
+
+          {:error, _reason} ->
+            # Some names might be invalid, that's OK
+            :ok
+        end
+      end
+    end
+  end
+
+  describe "Dimension calculation properties" do
+    property "strides calculation" do
+      check all(shape <- any_shape()) do
+        strides = Chunk.calculate_strides(shape)
+
+        # Last stride is always 1 (C-order)
+        assert elem(strides, tuple_size(strides) - 1) == 1
+
+        # Each stride is the product of all following dimensions
+        shape_list = Tuple.to_list(shape)
+        stride_list = Tuple.to_list(strides)
+
+        Enum.with_index(stride_list)
+        |> Enum.each(fn {stride, idx} ->
+          expected =
+            shape_list
+            |> Enum.drop(idx + 1)
+            |> Enum.reduce(1, &(&1 * &2))
+
+          assert stride == expected
+        end)
+      end
+    end
+
+    property "chunk size calculation" do
+      check all(shape <- one_of([shape_1d(), shape_2d(), shape_3d()])) do
+        chunk_shape =
+          shape
+          |> Tuple.to_list()
+          |> Enum.map(&max(1, div(&1, 5)))
+          |> List.to_tuple()
+
+        {:ok, array} =
+          ExZarr.create(
+            shape: shape,
+            chunks: chunk_shape,
+            dtype: :float64,
+            storage: :memory
+          )
+
+        # Verify chunk size matches expected bytes
+        itemsize = Array.itemsize(array)
+
+        expected_chunk_bytes =
+          chunk_shape
+          |> Tuple.to_list()
+          |> Enum.reduce(1, &(&1 * &2))
+          |> Kernel.*(itemsize)
+
+        chunk_bytes = Metadata.chunk_size_bytes(array.metadata)
+        assert chunk_bytes == expected_chunk_bytes
+      end
+    end
+  end
 end

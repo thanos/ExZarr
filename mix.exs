@@ -92,7 +92,8 @@ defmodule ExZarr.MixProject do
         {:excoveralls, "~> 0.18", only: :test},
         {:stream_data, "~> 1.1", only: [:dev, :test]},
         {:mox, "~> 1.1", only: :test},
-        {:benchee, "~> 1.3", only: :dev}
+        {:benchee, "~> 1.3", only: :dev},
+        {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false, warn_if_outdated: true}
       ]
   end
 

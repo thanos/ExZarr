@@ -1,0 +1,12 @@
+# Sobelow Security Configuration for ExZarr
+#
+# ExZarr is a data storage library for Zarr format arrays. All remaining warnings
+# are low-confidence and expected for this type of library:
+#
+# - File Traversal warnings: ExZarr intentionally reads/writes files at user-specified paths
+# - String.to_atom warnings: Codec/dtype names from a known, finite set are converted to atoms
+# - Atom interpolation warnings: Configuration keys are converted to atoms during initialization
+#
+# See SECURITY.md for detailed security guidance and safe usage patterns.
+
+[exit: false, format: "txt", ignore_files: [], ignore: ["Config.HTTPS"], out: nil, private: false, router: nil, skip: true, threshold: :low, verbose: false, version: false]
