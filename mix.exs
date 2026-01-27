@@ -88,7 +88,8 @@ defmodule ExZarr.MixProject do
         {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
         {:excoveralls, "~> 0.18", only: :test},
         {:stream_data, "~> 1.1", only: [:dev, :test]},
-        {:mox, "~> 1.1", only: :test}
+        {:mox, "~> 1.1", only: :test},
+        {:benchee, "~> 1.3", only: :dev}
       ]
   end
 
