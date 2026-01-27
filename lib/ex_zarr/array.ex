@@ -1940,9 +1940,46 @@ defmodule ExZarr.Array do
         {%{}, chunk_indices}
       end
 
+    Logger.debug(
+      "Reading chunks: #{length(chunk_indices)} total, #{length(uncached_indices)} uncached, #{map_size(cached_chunks)} cached"
+    )
+
+    # For single chunk or small number of chunks, use sequential read to avoid overhead
+    # For larger batches, use parallel reads for better performance
+    read_results =
+      if length(uncached_indices) <= 2 do
+        Logger.debug("Using sequential read for #{length(uncached_indices)} chunks")
+        read_chunks_sequential(array, uncached_indices)
+      else
+        Logger.debug("Using parallel read for #{length(uncached_indices)} chunks")
+        read_chunks_parallel(array, uncached_indices)
+      end
+
+    # Combine cached and newly read chunks in original order
+    chunks =
+      chunk_indices
+      |> Enum.map(fn index ->
+        case Map.get(cached_chunks, index) || Map.get(read_results, index) do
+          {:ok, data} -> data
+          {:error, reason} -> {:error, reason}
+          nil -> {:error, :chunk_missing}
+        end
+      end)
+
+    if Enum.any?(chunks, &match?({:error, _}, &1)) do
+      {:error, :read_failed}
+    else
+      {:ok, chunks}
+    end
+  end
+
+  # Sequential chunk reading for small batches
+  defp read_chunks_sequential(array, indices) do
+    require Logger
+
     # Acquire read locks if ArrayServer is present
     if array.server_pid do
-      Enum.each(uncached_indices, fn index ->
+      Enum.each(indices, fn index ->
         case ExZarr.ArrayServer.lock_chunk(array.server_pid, index, :read) do
           :ok ->
             Logger.debug("Acquired read lock on chunk #{inspect(index)}")
@@ -1956,54 +1993,15 @@ defmodule ExZarr.Array do
     end
 
     try do
-      # Read uncached chunks from storage
-      read_results =
-        uncached_indices
-        |> Enum.map(fn index ->
-          case Storage.read_chunk(array.storage, index) do
-            {:ok, compressed_data} ->
-              # Version-aware codec decoding
-              case apply_codec_pipeline_decode(array, compressed_data) do
-                {:ok, data} ->
-                  # Update cache if enabled
-                  if array.cache_enabled do
-                    cache_key = build_cache_key(array, index)
-                    ExZarr.ChunkCache.put(cache_key, data)
-                  end
-
-                  {index, {:ok, data}}
-
-                error ->
-                  {index, error}
-              end
-
-            {:error, :not_found} ->
-              fill_chunk = create_fill_chunk(array)
-              {index, {:ok, fill_chunk}}
-          end
-        end)
-        |> Map.new()
-
-      # Combine cached and newly read chunks in original order
-      chunks =
-        chunk_indices
-        |> Enum.map(fn index ->
-          case Map.get(cached_chunks, index) || Map.get(read_results, index) do
-            {:ok, data} -> data
-            {:error, reason} -> {:error, reason}
-            nil -> {:error, :chunk_missing}
-          end
-        end)
-
-      if Enum.any?(chunks, &match?({:error, _}, &1)) do
-        {:error, :read_failed}
-      else
-        {:ok, chunks}
-      end
+      indices
+      |> Enum.map(fn index ->
+        read_single_chunk(array, index)
+      end)
+      |> Map.new()
     after
       # Release locks
       if array.server_pid do
-        Enum.each(uncached_indices, fn index ->
+        Enum.each(indices, fn index ->
           case ExZarr.ArrayServer.unlock_chunk(array.server_pid, index) do
             :ok ->
               Logger.debug("Released read lock on chunk #{inspect(index)}")
@@ -2015,6 +2013,82 @@ defmodule ExZarr.Array do
           end
         end)
       end
+    end
+  end
+
+  # Parallel chunk reading for larger batches
+  defp read_chunks_parallel(array, indices) do
+    require Logger
+
+    # Use Task.async_stream for parallel reads
+    # Max concurrency is 8 to balance performance and resource usage
+    max_concurrency = min(length(indices), 8)
+
+    indices
+    |> Task.async_stream(
+      fn index ->
+        # Acquire lock for this specific chunk
+        if array.server_pid do
+          case ExZarr.ArrayServer.lock_chunk(array.server_pid, index, :read) do
+            :ok ->
+              Logger.debug("Acquired read lock on chunk #{inspect(index)}")
+
+            {:error, reason} ->
+              Logger.warning(
+                "Failed to acquire read lock on chunk #{inspect(index)}: #{inspect(reason)}"
+              )
+          end
+        end
+
+        try do
+          read_single_chunk(array, index)
+        after
+          # Release lock for this chunk
+          if array.server_pid do
+            case ExZarr.ArrayServer.unlock_chunk(array.server_pid, index) do
+              :ok ->
+                Logger.debug("Released read lock on chunk #{inspect(index)}")
+
+              {:error, reason} ->
+                Logger.warning(
+                  "Failed to release read lock on chunk #{inspect(index)}: #{inspect(reason)}"
+                )
+            end
+          end
+        end
+      end,
+      max_concurrency: max_concurrency,
+      timeout: 30_000,
+      ordered: false
+    )
+    |> Enum.reduce(%{}, fn
+      {:ok, {index, result}}, acc -> Map.put(acc, index, result)
+      {:exit, _reason}, acc -> acc
+    end)
+  end
+
+  # Read a single chunk with decompression and caching
+  defp read_single_chunk(array, index) do
+    case Storage.read_chunk(array.storage, index) do
+      {:ok, compressed_data} ->
+        # Version-aware codec decoding
+        case apply_codec_pipeline_decode(array, compressed_data) do
+          {:ok, data} ->
+            # Update cache if enabled
+            if array.cache_enabled do
+              cache_key = build_cache_key(array, index)
+              ExZarr.ChunkCache.put(cache_key, data)
+            end
+
+            {index, {:ok, data}}
+
+          error ->
+            {index, error}
+        end
+
+      {:error, :not_found} ->
+        fill_chunk = create_fill_chunk(array)
+        {index, {:ok, fill_chunk}}
     end
   end
 
@@ -2772,27 +2846,75 @@ defmodule ExZarr.Array do
          {slice_start_y, slice_start_x},
          element_size
        ) do
-    # Copy row by row
-    Enum.reduce(overlap_start_y..(overlap_stop_y - 1), output, fn y, acc ->
-      # Position in chunk
-      chunk_row = y - chunk_start_y
-      chunk_offset = (chunk_row * chunk_w + (overlap_start_x - chunk_start_x)) * element_size
-      row_length = (overlap_stop_x - overlap_start_x) * element_size
+    # OPTIMIZED: Build list of updates, then apply all at once
+    updates =
+      for y <- overlap_start_y..(overlap_stop_y - 1) do
+        # Position in chunk
+        chunk_row = y - chunk_start_y
+        chunk_offset = (chunk_row * chunk_w + (overlap_start_x - chunk_start_x)) * element_size
+        row_length = (overlap_stop_x - overlap_start_x) * element_size
 
-      # Extract row from chunk
-      <<_::binary-size(chunk_offset), row_data::binary-size(row_length), _::binary>> =
-        chunk_data
+        # Extract row from chunk
+        <<_::binary-size(chunk_offset), row_data::binary-size(row_length), _::binary>> =
+          chunk_data
 
-      # Position in output
-      output_row = y - slice_start_y
-      output_offset = (output_row * slice_w + (overlap_start_x - slice_start_x)) * element_size
+        # Position in output
+        output_row = y - slice_start_y
 
-      # Place row in output
-      <<before::binary-size(output_offset), _::binary-size(row_length), after_part::binary>> =
-        acc
+        output_offset =
+          (output_row * slice_w + (overlap_start_x - slice_start_x)) * element_size
 
-      <<before::binary, row_data::binary, after_part::binary>>
-    end)
+        {output_offset, row_length, row_data}
+      end
+
+    # Apply all updates efficiently
+    apply_binary_updates(output, updates)
+  end
+
+  # Efficiently apply multiple binary updates
+  defp apply_binary_updates(binary, updates) when updates == [] do
+    binary
+  end
+
+  defp apply_binary_updates(binary, updates) do
+    # Sort updates by position to process left-to-right
+    sorted_updates = Enum.sort_by(updates, fn {offset, _, _} -> offset end)
+
+    # Build output using iolist for efficiency
+    {iolist, _} =
+      Enum.reduce(sorted_updates, {[], 0}, fn {offset, length, data}, {acc, pos} ->
+        # Add unchanged data before this update
+        unchanged_size = offset - pos
+
+        unchanged =
+          if unchanged_size > 0 do
+            <<unchanged_part::binary-size(unchanged_size), _::binary>> =
+              :binary.part(binary, pos, byte_size(binary) - pos)
+
+            unchanged_part
+          else
+            <<>>
+          end
+
+        # Add unchanged + new data to iolist
+        {[acc, unchanged, data], pos + unchanged_size + length}
+      end)
+
+    # Add any remaining data after last update
+    {_, last_pos} = List.last(sorted_updates) |> then(fn {off, len, _} -> {off, off + len} end)
+
+    remaining_size = byte_size(binary) - last_pos
+
+    remaining =
+      if remaining_size > 0 do
+        <<_::binary-size(last_pos), remaining_part::binary>> = binary
+        remaining_part
+      else
+        <<>>
+      end
+
+    # Convert iolist to binary
+    IO.iodata_to_binary([iolist, remaining])
   end
 
   # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
@@ -2807,6 +2929,7 @@ defmodule ExZarr.Array do
          slice_start,
          element_size
        ) do
+    # OPTIMIZED: Collect all updates, then apply batch update
     # Generate all indices in the overlap region
     overlap_ranges =
       Tuple.to_list(overlap_start)
@@ -2817,44 +2940,44 @@ defmodule ExZarr.Array do
     chunk_strides = ExZarr.Chunk.calculate_strides(chunk_shape)
     slice_strides = ExZarr.Chunk.calculate_strides(slice_shape)
 
-    # Copy element by element
+    # Collect all element updates
     indices = cartesian_product(overlap_ranges)
 
-    Enum.reduce(indices, output, fn index_list, acc ->
-      index = List.to_tuple(index_list)
+    updates =
+      Enum.map(indices, fn index_list ->
+        index = List.to_tuple(index_list)
 
-      # Calculate offset in chunk
-      chunk_offset =
-        Tuple.to_list(index)
-        |> Enum.zip(Tuple.to_list(chunk_start))
-        |> Enum.zip(Tuple.to_list(chunk_strides))
-        |> Enum.reduce(0, fn {{idx, start}, stride}, offset ->
-          offset + (idx - start) * stride
-        end)
+        # Calculate offset in chunk
+        chunk_offset =
+          Tuple.to_list(index)
+          |> Enum.zip(Tuple.to_list(chunk_start))
+          |> Enum.zip(Tuple.to_list(chunk_strides))
+          |> Enum.reduce(0, fn {{idx, start}, stride}, offset ->
+            offset + (idx - start) * stride
+          end)
 
-      chunk_byte_offset = chunk_offset * element_size
+        chunk_byte_offset = chunk_offset * element_size
 
-      # Extract element from chunk
-      <<_::binary-size(chunk_byte_offset), element::binary-size(element_size), _::binary>> =
-        chunk_data
+        # Extract element from chunk
+        <<_::binary-size(chunk_byte_offset), element::binary-size(element_size), _::binary>> =
+          chunk_data
 
-      # Calculate offset in output
-      output_offset =
-        Tuple.to_list(index)
-        |> Enum.zip(Tuple.to_list(slice_start))
-        |> Enum.zip(Tuple.to_list(slice_strides))
-        |> Enum.reduce(0, fn {{idx, start}, stride}, offset ->
-          offset + (idx - start) * stride
-        end)
+        # Calculate offset in output
+        output_offset =
+          Tuple.to_list(index)
+          |> Enum.zip(Tuple.to_list(slice_start))
+          |> Enum.zip(Tuple.to_list(slice_strides))
+          |> Enum.reduce(0, fn {{idx, start}, stride}, offset ->
+            offset + (idx - start) * stride
+          end)
 
-      output_byte_offset = output_offset * element_size
+        output_byte_offset = output_offset * element_size
 
-      # Place element in output
-      <<before::binary-size(output_byte_offset), _::binary-size(element_size),
-        after_part::binary>> = acc
+        {output_byte_offset, element_size, element}
+      end)
 
-      <<before::binary, element::binary, after_part::binary>>
-    end)
+    # Apply all updates efficiently
+    apply_binary_updates(output, updates)
   end
 
   # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity

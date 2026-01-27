@@ -88,15 +88,16 @@ defmodule ExZarr.MixProject do
         {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
         {:excoveralls, "~> 0.18", only: :test},
         {:stream_data, "~> 1.1", only: [:dev, :test]},
-        {:mox, "~> 1.1", only: :test}
+        {:mox, "~> 1.1", only: :test},
+        {:benchee, "~> 1.3", only: :dev}
       ]
   end
 
   defp description do
     """
-    Pure Elixir implementation of Zarr v2: compressed, chunked, N-dimensional arrays
-    with full Python zarr-python compatibility. Perfect for data science, scientific
-    computing, and working with large datasets.
+    Pure Elixir implementation of Zarr v2 and v3: compressed, chunked, N-dimensional arrays
+    with full Python zarr-python compatibility. Supports chunk streaming, custom encoders,
+    and multiple storage backends including S3 and GCS.
     """
   end
 
