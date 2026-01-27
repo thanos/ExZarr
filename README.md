@@ -77,7 +77,7 @@ ExZarr v0.8+ includes major performance optimizations:
 - After: 4.2ms per read
 - **Speedup: 26×** 🚀
 
-See [Performance Guide](guides/performance.md) for tuning recommendations and [benchmarks/](benchmarks/) for running your own tests.
+See [Performance Guide](guides/performance.md) for tuning recommendations and [Benchmarks](benchmarks/README.md) for running your own tests.
 
 ```bash
 # Run quick performance check (completes in 6 seconds)
