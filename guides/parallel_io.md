@@ -1080,4 +1080,4 @@ Now that you understand parallel I/O:
 1. **Configure Storage**: Set up S3 or other backends in [Storage Providers Guide](storage_providers.md)
 2. **Optimize Compression**: Choose codecs for your workload in [Compression and Codecs Guide](compression_codecs.md)
 3. **Tune Performance**: Chunk size and concurrency tuning in [Performance Guide](performance.md)
-4. **Stream Processing**: Integrate with Broadway in [Advanced Usage Guide](advanced_usage.md)
+4. **Stream Processing**: Integrate with Broadway in [Advanced Usage Guide](parallel_io.md)

@@ -202,7 +202,7 @@ mix compile
 
 ### Issue: `{:error, :not_found}` when reading array
 
-**Symptom**: `ExZarr.open/1` or `ExZarr.Array.get_slice/3` returns `{:error, :not_found}`.
+**Symptom**: ExZarr.open/1 or ExZarr.Array.get_slice/3 returns `{:error, :not_found}`.
 
 **Diagnosis**:
 

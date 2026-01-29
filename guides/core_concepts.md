@@ -461,7 +461,7 @@ ExZarr internally converts v2 configuration to v3 pipeline for consistent execut
 
 **Prioritize availability:**
 - `:zlib` is always available (Erlang built-in)
-- Other codecs require Zig NIFs (see [Installation Guide](installation.md))
+- Other codecs require Zig NIFs (see [Installation Guide](../README.md#installation))
 
 **Compression vs speed trade-offs:**
 - **Fastest**: `:lz4` (good for hot data, frequent access)

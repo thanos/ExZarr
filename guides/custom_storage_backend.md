@@ -1112,4 +1112,4 @@ Now that you can implement custom backends:
 1. **Learn Compression:** Optimize codec selection in [Compression and Codecs Guide](compression_codecs.md)
 2. **Python Interop:** Ensure compatibility in [Python Interoperability Guide](python_interop.md)
 3. **Performance Tuning:** Benchmark your backend in [Performance Guide](performance.md)
-4. **Example Applications:** See real-world patterns in [Advanced Usage Guide](advanced_usage.md)
+4. **Example Applications:** See real-world patterns in [Advanced Usage Guide](custom_storage_backend.md)

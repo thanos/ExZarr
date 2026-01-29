@@ -4,7 +4,7 @@ Get up and running with ExZarr in under 5 minutes. This guide shows you how to c
 
 ## Prerequisites
 
-You should have ExZarr installed. If not, see the [Installation Guide](installation.md).
+You should have ExZarr installed. If not, see the [Installation Guide](../README.md#installation).
 
 ## Create a Store and Array
 
