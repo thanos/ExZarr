@@ -180,11 +180,11 @@ defmodule ExZarr.MixProject do
           "guides/performance.md",
           "guides/nx_integration.md"
         ],
-        "Reference": [
+        Reference: [
           "guides/troubleshooting.md",
           "guides/glossary.md"
         ],
-        "Contributing": [
+        Contributing: [
           "guides/contributing.md"
         ],
         "Additional Documentation": [
