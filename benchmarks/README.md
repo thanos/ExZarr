@@ -17,7 +17,7 @@ mix run benchmarks/io_bench.exs
 
 ## Benchmark Files
 
-### 1. `slicing_bench_quick.exs` ⚡ **RECOMMENDED**
+### 1. `slicing_bench_quick.exs`  **RECOMMENDED**
 **Runtime**: ~6 seconds
 **Purpose**: Quick slicing performance verification
 
@@ -114,12 +114,12 @@ Based on optimizations in v0.8.0:
 | Operation | Time | Scaling |
 |-----------|------|---------|
 | Single chunk (100x100) | 0.25ms | 1x |
-| 4 chunks (2x2) | 1.02ms | 4.1x ⭐ (near optimal) |
-| 9 chunks (3x3) | 2.28ms | 9.1x ⭐ (near optimal) |
+| 4 chunks (2x2) | 1.02ms | 4.1x  (near optimal) |
+| 9 chunks (3x3) | 2.28ms | 9.1x  (near optimal) |
 
 **Before optimization**: 16 chunks took 110ms (298x slower than expected)
 **After optimization**: 16 chunks take 4.4ms (17x - near optimal)
-**Improvement**: 26x faster! 🚀
+**Improvement**: 26x faster! 
 
 ### Compression Performance
 
@@ -208,10 +208,10 @@ Add to your CI pipeline:
 
 ### Performance Red Flags
 
-- ⚠️ N chunks taking >2N× single chunk time
-- ⚠️ Memory growing quadratically
-- ⚠️ Compression >50ms/MB
-- ⚠️ No cache benefit for repeated reads
+- WARNING: N chunks taking >2N× single chunk time
+- WARNING: Memory growing quadratically
+- WARNING: Compression >50ms/MB
+- WARNING: No cache benefit for repeated reads
 
 ## Benchmarking Best Practices
 

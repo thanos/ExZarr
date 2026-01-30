@@ -94,18 +94,18 @@ Jason.decode!(content)
 Added `ExZarr.save/2` call to **8 tests** in `test/ex_zarr_v3_python_interop_test.exs`:
 
 ### ExZarr v3 → Python 3.x Compatibility (6 tests)
-1. ✅ Line 236: "creates 1D int32 v3 array readable by zarr-python 3.x"
-2. ✅ Line 274: "creates 2D float64 v3 array readable by zarr-python 3.x"
-3. ✅ Line 312: "creates 3D uint16 v3 array readable by zarr-python 3.x"
-4. ✅ Line 349: "creates v3 arrays with all dtypes readable by Python"
-5. ✅ Line 395: "v3 array has correct file structure"
+1. Line 236: "creates 1D int32 v3 array readable by zarr-python 3.x"
+2. Line 274: "creates 2D float64 v3 array readable by zarr-python 3.x"
+3. Line 312: "creates 3D uint16 v3 array readable by zarr-python 3.x"
+4. Line 349: "creates v3 arrays with all dtypes readable by Python"
+5. Line 395: "v3 array has correct file structure"
 
 ### v3 Metadata Compatibility (1 test)
-6. ✅ Line 478: "Python correctly reads ExZarr v3 array metadata"
+6. Line 478: "Python correctly reads ExZarr v3 array metadata"
 
 ### v3 Codec Compatibility (2 tests)
-7. ✅ Line 540: "unified codec pipeline is preserved"
-8. ✅ Line 576: "bytes codec is always present in v3 arrays"
+7. Line 540: "unified codec pipeline is preserved"
+8. Line 576: "bytes codec is always present in v3 arrays"
 
 ## Result
 

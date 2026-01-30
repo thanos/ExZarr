@@ -65,7 +65,7 @@ defmodule S3StorageExample do
         run_examples()
 
       {:error, reason} ->
-        IO.puts("\n❌ S3 configuration error: #{reason}")
+        IO.puts("\nS3 configuration error: #{reason}")
         IO.puts("\nPlease configure AWS credentials to run this example.")
         IO.puts("See file header for configuration instructions.")
     end
@@ -86,7 +86,7 @@ defmodule S3StorageExample do
   end
 
   defp create_bucket do
-    IO.puts("\nℹ️  Bucket '#{@bucket}' doesn't exist. Attempting to create...")
+    IO.puts("\nBucket '#{@bucket}' doesn't exist. Attempting to create...")
 
     case ExAws.S3.put_bucket(@bucket, @region) |> ExAws.request() do
       {:ok, _} ->
@@ -111,8 +111,8 @@ defmodule S3StorageExample do
     example_5_error_handling()
     example_6_performance_tips()
 
-    IO.puts("\n✅ All examples completed successfully!")
-    IO.puts("\nℹ️  Data stored in: s3://#{@bucket}/#{@array_prefix}\n")
+    IO.puts("\nAll examples completed successfully!")
+    IO.puts("\nData stored in: s3://#{@bucket}/#{@array_prefix}\n")
   end
 
   ## Example 1: Basic Array Creation
@@ -196,7 +196,7 @@ defmodule S3StorageExample do
     if Nx.all_close(temperature_data, read_data) do
       IO.puts("✓ Data integrity verified - read data matches written data")
     else
-      IO.puts("⚠️  Warning: Data mismatch detected")
+      IO.puts("Warning: Data mismatch detected")
     end
   end
 

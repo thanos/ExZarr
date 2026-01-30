@@ -157,7 +157,7 @@ Or rely on environment variable:
 
 If tests are skipped:
 ```
-⚠️  S3 tests require AWS credentials and endpoint configuration.
+WARNING:  S3 tests require AWS credentials and endpoint configuration.
 ```
 
 **Solution**: Set `AWS_ENDPOINT_URL` environment variable before running tests.

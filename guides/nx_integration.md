@@ -195,10 +195,10 @@ All 10 standard numeric types are fully supported:
 
 | Nx Type | Status | Workaround |
 |---------|--------|------------|
-| `{:bf, 16}` | ❌ Not in Zarr spec | Store as `:float32`, cast to BF16 in memory |
-| `{:f, 16}` | ❌ Not in Zarr spec | Store as `:float32`, cast to FP16 in memory |
-| `{:c, 64}` | ❌ Not supported | Store real/imaginary as separate arrays |
-| `{:c, 128}` | ❌ Not supported | Store real/imaginary as separate arrays |
+| `{:bf, 16}` | X Not in Zarr spec | Store as `:float32`, cast to BF16 in memory |
+| `{:f, 16}` | X Not in Zarr spec | Store as `:float32`, cast to FP16 in memory |
+| `{:c, 64}` | X Not supported | Store real/imaginary as separate arrays |
+| `{:c, 128}` | X Not supported | Store real/imaginary as separate arrays |
 
 **BF16/FP16 Workaround:**
 
@@ -443,7 +443,7 @@ IO.puts("Training complete!")
 )
 # Result: Loading 1 batch = 1 I/O operation (efficient!)
 
-# ❌ Bad: Chunks misaligned
+# X Bad: Chunks misaligned
 {:ok, array} = ExZarr.create(
   shape: {10000, 784},
   chunks: {50, 784},      # Chunks span batch boundaries
@@ -831,7 +831,7 @@ end
 
 ## Legacy Approaches
 
-### ⚠️ Deprecated: Nested Tuple Conversion
+### WARNING: Deprecated: Nested Tuple Conversion
 
 **Note:** This approach is **5-10x slower** than `ExZarr.Nx`. Only use for compatibility with old code.
 
@@ -845,7 +845,7 @@ defmodule ExZarr.Nx.LegacyHelpers do
   @moduledoc """
   Legacy conversion helpers using nested tuples.
 
-  ⚠️ DEPRECATED: Use ExZarr.Nx module instead (5-10x faster).
+  WARNING: DEPRECATED: Use ExZarr.Nx module instead (5-10x faster).
   """
 
   def nested_list_to_tuple(list) when is_list(list) do
@@ -867,7 +867,7 @@ end
 #### Legacy Write Pattern
 
 ```elixir
-# ⚠️ SLOW: 80-150ms for 8MB
+# WARNING: SLOW: 80-150ms for 8MB
 tensor = Nx.iota({1000, 1000})
 
 {:ok, array} = ExZarr.create(
@@ -892,7 +892,7 @@ data = tensor
 #### Legacy Read Pattern
 
 ```elixir
-# ⚠️ SLOW: 80-150ms for 8MB
+# WARNING: SLOW: 80-150ms for 8MB
 {:ok, array} = ExZarr.open(path: "/data/array")
 
 {:ok, data} = ExZarr.Array.get_slice(array,

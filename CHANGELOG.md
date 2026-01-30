@@ -373,7 +373,7 @@ None - Full backward compatibility maintained with v0.1.0, v0.3.0, and v0.4.0
 #### Interoperability
 - **Full Zarr v2 specification compliance**
 - **Bidirectional compatibility with zarr-python**
-- **14 integration tests** verifying Python ↔ Elixir compatibility
+- **14 integration tests** verifying Python - Elixir compatibility
 - **All data types work across implementations**
 - **Metadata format compatibility**
 

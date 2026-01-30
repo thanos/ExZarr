@@ -41,7 +41,7 @@ defmodule ExZarr.Storage.S3Test do
     if is_nil(endpoint) do
       IO.puts("""
 
-      ⚠️  S3 tests require AWS credentials and endpoint configuration.
+      WARNING:  S3 tests require AWS credentials and endpoint configuration.
       See test file for setup instructions.
       """)
     else
@@ -520,7 +520,7 @@ defmodule ExZarr.Storage.S3Test do
         :ok
 
       {:error, error} ->
-        IO.puts("⚠️  Failed to create bucket: #{inspect(error)}")
+        IO.puts("WARNING:  Failed to create bucket: #{inspect(error)}")
         :ok
     end
   end
