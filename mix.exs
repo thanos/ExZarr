@@ -129,6 +129,7 @@ defmodule ExZarr.MixProject do
       extras: [
         # Getting Started
         "README.md",
+        "ZARR_V3_STATUS.md",
         "guides/quickstart.md",
 
         # Core Concepts

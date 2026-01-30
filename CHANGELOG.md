@@ -147,7 +147,7 @@ Special thanks to all contributors who made v1.0.0 possible through testing, fee
 
 Planned for v1.1.0:
 - Additional cloud storage backend optimizations
-- Enhanced v3 format support
+- Zarr v3 extension features (variable chunking, additional codecs)
 - Performance improvements for large arrays
 - Additional convenience functions for common patterns
 

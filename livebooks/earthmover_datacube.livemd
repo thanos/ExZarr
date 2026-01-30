@@ -1,0 +1,987 @@
+# Earthmover CNG 2025: Datacubes and Chunk-Based Computation
+
+```elixir
+Mix.install([
+  {:ex_zarr, "~> 1.0"},
+  {:nx, "~> 0.7"},
+  {:kino, "~> 0.13"},
+  {:kino_vega_lite, "~> 0.1"}
+])
+```
+
+## What is a Datacube
+
+A datacube is a multi-dimensional array representing spatiotemporal data. The term "cube" emphasizes organization along three or more axes, typically including:
+
+- **Spatial dimensions**: X and Y coordinates (longitude, latitude, or pixels)
+- **Temporal dimension**: Time (dates, timestamps, or sequence numbers)
+- **Additional dimensions**: Spectral bands, elevation levels, scenarios, or variables
+
+**Common Applications:**
+
+**Earth Observation:**
+- Satellite imagery time series
+- Climate model outputs
+- Weather forecasts
+- Land use classification
+
+**Scientific Analysis:**
+- Medical imaging (3D + time + modality)
+- Oceanography (depth + lat + lon + time)
+- Atmospheric science (pressure levels + spatial + time)
+
+**Key Characteristics:**
+
+1. **Regular Grid**: Data aligned to consistent spatial/temporal coordinates
+2. **Multi-Dimensional**: Typically 3D (space + time) or 4D (space + time + bands)
+3. **Large Scale**: Often too large for memory, requiring chunked access
+4. **Analysis-Ready**: Preprocessed, calibrated, and georeferenced
+5. **Interoperable**: Standard formats and metadata conventions
+
+**Why Zarr for Datacubes:**
+
+- **Chunked Storage**: Selective access to spatial/temporal subsets
+- **Compression**: Reduce storage for repetitive patterns
+- **Cloud-Native**: Direct access from object storage (S3, GCS)
+- **Parallel I/O**: Multiple processes read/write simultaneously
+- **Flexible Layout**: Optimize chunks for access patterns
+
+This notebook demonstrates datacube construction, chunk-based computation, and analysis workflows using ExZarr.
+
+## Building a 4D Zarr Structure
+
+We'll create a 4D datacube representing multi-spectral satellite imagery:
+
+**Dimensions:**
+- **Time**: 12 months (monthly composites)
+- **Band**: 4 spectral bands (Red, Green, Blue, Near-Infrared)
+- **Y**: 1000 pixels (latitude/northing)
+- **X**: 1000 pixels (longitude/easting)
+
+**Total size**: 12 × 4 × 1000 × 1000 = 48 million pixels
+
+```elixir
+# Define datacube structure
+time_steps = 12
+bands = 4
+height = 1000
+width = 1000
+
+shape = {time_steps, bands, height, width}
+
+# Chunk strategy: optimize for spatial queries and time series
+# Chunks: (1 month, all bands, 250x250 spatial)
+chunks = {1, 4, 250, 250}
+
+IO.puts("Datacube specification:")
+IO.puts("  Shape: #{inspect(shape)}")
+IO.puts("  Chunks: #{inspect(chunks)}")
+IO.puts("  Total elements: #{time_steps * bands * height * width |> format_number()}")
+IO.puts("  Chunk size: #{1 * 4 * 250 * 250 |> format_number()} elements")
+IO.puts("  Number of chunks: #{div(time_steps, 1) * div(bands, 4) * div(height, 250) * div(width, 250)}")
+
+defp format_number(n) when n >= 1_000_000, do: "#{Float.round(n / 1_000_000, 1)}M"
+defp format_number(n) when n >= 1_000, do: "#{Float.round(n / 1_000, 1)}K"
+defp format_number(n), do: "#{n}"
+```
+
+```elixir
+# Create the datacube array
+{:ok, datacube} =
+  ExZarr.create(
+    shape: shape,
+    chunks: chunks,
+    dtype: :uint16,
+    storage: :memory
+  )
+
+# Add metadata
+datacube_attrs = %{
+  "title" => "Multi-Spectral Satellite Datacube",
+  "description" => "Monthly composites for 12 months, 4 spectral bands",
+  "dimensions" => ["time", "band", "y", "x"],
+  "coordinates" => %{
+    "time" => "months 0-11 (Jan-Dec 2024)",
+    "band" => "0=Red, 1=Green, 2=Blue, 3=NIR",
+    "y" => "1000 pixels (north-south)",
+    "x" => "1000 pixels (east-west)"
+  },
+  "spatial_resolution" => "30 meters",
+  "crs" => "EPSG:32610",
+  "units" => "digital numbers (0-65535)",
+  "created_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+}
+
+ExZarr.update_attributes(datacube, datacube_attrs)
+
+IO.puts("Datacube created with metadata")
+```
+
+```elixir
+# Generate synthetic satellite imagery data
+# Simulates realistic patterns: spatial autocorrelation, seasonal variation, spectral characteristics
+
+defmodule DatacubeGenerator do
+  @moduledoc """
+  Generate synthetic multi-spectral satellite imagery.
+  """
+
+  def generate_datacube(time_steps, bands, height, width) do
+    IO.puts("Generating synthetic datacube data...")
+
+    for t <- 0..(time_steps - 1) do
+      IO.write("\rGenerating month #{t + 1}/#{time_steps}...")
+
+      # Generate all bands for this time step
+      band_data =
+        for b <- 0..(bands - 1) do
+          generate_band(t, b, height, width)
+        end
+        |> Nx.stack()
+
+      band_data
+    end
+    |> Nx.stack()
+    |> tap(fn _ -> IO.puts(" Done!") end)
+  end
+
+  defp generate_band(time, band, height, width) do
+    # Base patterns
+    base_value = band_base_value(band)
+    seasonal_factor = seasonal_variation(time, band)
+
+    # Generate spatial pattern
+    data =
+      for y <- 0..(height - 1), x <- 0..(width - 1) do
+        # Spatial patterns
+        gradient_y = y / height
+        gradient_x = x / width
+
+        # Simulate landscape features
+        # Low-frequency variation (terrain)
+        terrain = :math.sin(y * :math.pi() / 100) * :math.cos(x * :math.pi() / 100)
+
+        # Medium-frequency variation (land cover patches)
+        patches = :math.sin(y * :math.pi() / 25) * :math.sin(x * :math.pi() / 25)
+
+        # Combine patterns
+        value =
+          base_value +
+            gradient_y * 2000 +
+            gradient_x * 1000 +
+            terrain * 3000 +
+            patches * 2000 +
+            seasonal_factor * 5000 +
+            (:rand.uniform() - 0.5) * 500
+
+        # Clamp to uint16 range
+        value
+        |> max(0)
+        |> min(65_535)
+        |> round()
+      end
+
+    Nx.tensor(data, type: {:u, 16})
+    |> Nx.reshape({height, width})
+  end
+
+  defp band_base_value(0), do: 8000  # Red
+  defp band_base_value(1), do: 10_000  # Green
+  defp band_base_value(2), do: 7000  # Blue
+  defp band_base_value(3), do: 15_000  # NIR
+
+  defp seasonal_variation(month, band) do
+    # Vegetation index (NIR and Red) varies seasonally
+    angle = month * :math.pi() / 6
+
+    case band do
+      0 -> -:math.cos(angle) * 0.3  # Red decreases in summer (more vegetation)
+      3 -> :math.cos(angle) * 0.5  # NIR increases in summer (more vegetation)
+      _ -> :math.cos(angle) * 0.1  # Small seasonal variation for Green/Blue
+    end
+  end
+end
+
+# Generate and write data
+datacube_data =
+  DatacubeGenerator.generate_datacube(time_steps, bands, height, width)
+
+:ok = ExZarr.Nx.to_zarr(datacube_data, datacube)
+
+IO.puts("\nDatacube populated with synthetic satellite imagery")
+IO.puts("Data type: #{inspect(Nx.type(datacube_data))}")
+IO.puts("Data shape: #{inspect(Nx.shape(datacube_data))}")
+```
+
+```elixir
+# Inspect datacube structure
+metadata = ExZarr.metadata(datacube)
+attrs = ExZarr.attributes(datacube)
+
+datacube_info = """
+## Datacube Structure
+
+**Dimensions:** #{inspect(metadata.shape)}
+- Time: #{elem(metadata.shape, 0)} months
+- Bands: #{elem(metadata.shape, 1)} spectral bands
+- Y: #{elem(metadata.shape, 2)} pixels
+- X: #{elem(metadata.shape, 3)} pixels
+
+**Chunks:** #{inspect(metadata.chunks)}
+- Temporal: #{elem(metadata.chunks, 0)} month(s) per chunk
+- Spectral: #{elem(metadata.chunks, 1)} band(s) per chunk
+- Spatial: #{elem(metadata.chunks, 2)}×#{elem(metadata.chunks, 3)} pixels per chunk
+
+**Storage:**
+- Data type: #{metadata.dtype}
+- Compressor: #{inspect(metadata.compressor)}
+- Bytes per element: 2
+- Uncompressed size: #{12 * 4 * 1000 * 1000 * 2 / 1_048_576 |> Float.round(1)} MB
+
+**Metadata:**
+- Title: #{attrs["title"]}
+- Spatial resolution: #{attrs["spatial_resolution"]}
+- Coordinate system: #{attrs["crs"]}
+"""
+
+Kino.Markdown.new(datacube_info)
+```
+
+## Chunk-Aware Computation
+
+Chunk-aware algorithms process data in blocks, enabling computation on datasets larger than memory. Benefits:
+
+1. **Memory Efficiency**: Process one chunk at a time
+2. **Parallelism**: Independent chunks can be processed concurrently
+3. **I/O Optimization**: Read only required chunks
+4. **Scalability**: Handle arbitrarily large datasets
+
+**Strategy:**
+
+- Iterate over chunk grid
+- Load chunk
+- Compute result
+- Store or aggregate
+- Move to next chunk
+
+Let's compute statistics chunk-by-chunk:
+
+```elixir
+defmodule ChunkProcessor do
+  @moduledoc """
+  Process Zarr datacube chunk-by-chunk.
+  """
+
+  def compute_temporal_mean(datacube) do
+    metadata = ExZarr.metadata(datacube)
+    {time_steps, bands, height, width} = metadata.shape
+    {t_chunk, b_chunk, y_chunk, x_chunk} = metadata.chunks
+
+    IO.puts("Computing temporal mean across #{time_steps} time steps...")
+    IO.puts("Processing #{div(height, y_chunk) * div(width, x_chunk)} spatial chunks")
+
+    # Result array: (bands, y, x) - mean across time
+    result_shape = {bands, height, width}
+    result = Nx.broadcast(0.0, result_shape) |> Nx.as_type({:f, 32})
+
+    # Iterate over spatial chunks
+    num_y_chunks = div(height, y_chunk)
+    num_x_chunks = div(width, x_chunk)
+    total_chunks = num_y_chunks * num_x_chunks
+
+    result =
+      for y_idx <- 0..(num_y_chunks - 1),
+          x_idx <- 0..(num_x_chunks - 1),
+          reduce: result do
+        acc ->
+          chunk_num = y_idx * num_x_chunks + x_idx + 1
+          IO.write("\rProcessing chunk #{chunk_num}/#{total_chunks}...")
+
+          # Calculate chunk boundaries
+          y_start = y_idx * y_chunk
+          y_end = min(y_start + y_chunk - 1, height - 1)
+          x_start = x_idx * x_chunk
+          x_end = min(x_start + x_chunk - 1, width - 1)
+
+          # Read all time steps for this spatial chunk
+          {:ok, chunk_data} = ExZarr.slice(datacube, {0..(time_steps - 1), 0..(bands - 1), y_start..y_end, x_start..x_end})
+
+          # Compute mean across time (axis 0)
+          chunk_mean =
+            chunk_data
+            |> Nx.as_type({:f, 32})
+            |> Nx.mean(axes: [0])
+
+          # Insert into result
+          y_size = y_end - y_start + 1
+          x_size = x_end - x_start + 1
+
+          Nx.put_slice(acc, [0, y_start, x_start], Nx.reshape(chunk_mean, {bands, y_size, x_size}))
+      end
+
+    IO.puts(" Done!")
+    result
+  end
+
+  def compute_ndvi_time_series(datacube, y_pixel, x_pixel) do
+    metadata = ExZarr.metadata(datacube)
+    {time_steps, _bands, _height, _width} = metadata.shape
+
+    IO.puts("Computing NDVI time series at pixel (#{y_pixel}, #{x_pixel})...")
+
+    # Read all time steps for one pixel location, bands 0 (Red) and 3 (NIR)
+    ndvi_values =
+      for t <- 0..(time_steps - 1) do
+        # Read Red band (band 0)
+        {:ok, red} = ExZarr.slice(datacube, {t..t, 0..0, y_pixel..y_pixel, x_pixel..x_pixel})
+        red_value = Nx.to_number(red[0][0][0][0]) |> Nx.tensor(type: {:f, 32})
+
+        # Read NIR band (band 3)
+        {:ok, nir} = ExZarr.slice(datacube, {t..t, 3..3, y_pixel..y_pixel, x_pixel..x_pixel})
+        nir_value = Nx.to_number(nir[0][0][0][0]) |> Nx.tensor(type: {:f, 32})
+
+        # NDVI = (NIR - Red) / (NIR + Red)
+        numerator = Nx.subtract(nir_value, red_value)
+        denominator = Nx.add(nir_value, red_value)
+
+        ndvi =
+          Nx.select(
+            Nx.equal(denominator, 0),
+            0.0,
+            Nx.divide(numerator, denominator)
+          )
+
+        Nx.to_number(ndvi)
+      end
+
+    IO.puts("NDVI computation complete")
+    ndvi_values
+  end
+
+  def chunk_statistics(datacube) do
+    metadata = ExZarr.metadata(datacube)
+    {time_steps, bands, height, width} = metadata.shape
+    {t_chunk, b_chunk, y_chunk, x_chunk} = metadata.chunks
+
+    num_t_chunks = div(time_steps, t_chunk)
+    num_y_chunks = div(height, y_chunk)
+    num_x_chunks = div(width, x_chunk)
+
+    total_chunks = num_t_chunks * num_y_chunks * num_x_chunks
+
+    IO.puts("Analyzing chunk access patterns...")
+    IO.puts("Total chunks: #{total_chunks}")
+    IO.puts("  Temporal chunks: #{num_t_chunks}")
+    IO.puts("  Spatial chunks (Y): #{num_y_chunks}")
+    IO.puts("  Spatial chunks (X): #{num_x_chunks}")
+
+    %{
+      total_chunks: total_chunks,
+      temporal_chunks: num_t_chunks,
+      spatial_y_chunks: num_y_chunks,
+      spatial_x_chunks: num_x_chunks,
+      elements_per_chunk: t_chunk * b_chunk * y_chunk * x_chunk,
+      bytes_per_chunk: t_chunk * b_chunk * y_chunk * x_chunk * 2
+    }
+  end
+end
+
+# Compute chunk statistics
+stats = ChunkProcessor.chunk_statistics(datacube)
+
+chunk_stats = """
+## Chunk Analysis
+
+**Total Chunks:** #{stats.total_chunks}
+
+**Chunk Distribution:**
+- Temporal: #{stats.temporal_chunks} chunks (#{elem(metadata.chunks, 0)} month(s) each)
+- Spatial Y: #{stats.spatial_y_chunks} chunks (#{elem(metadata.chunks, 2)} pixels each)
+- Spatial X: #{stats.spatial_x_chunks} chunks (#{elem(metadata.chunks, 3)} pixels each)
+
+**Chunk Size:**
+- Elements: #{format_number(stats.elements_per_chunk)}
+- Bytes: #{Float.round(stats.bytes_per_chunk / 1024, 1)} KB
+
+**Access Patterns:**
+
+**Temporal Query** (one location, all times):
+- Chunks accessed: #{stats.temporal_chunks}
+- Data read: #{Float.round(stats.temporal_chunks * stats.bytes_per_chunk / 1024, 1)} KB
+
+**Spatial Query** (one time, spatial region):
+- Example: 250×250 region
+- Chunks accessed: 1
+- Data read: #{Float.round(stats.bytes_per_chunk / 1024, 1)} KB
+
+**Full Scan** (all data):
+- Chunks accessed: #{stats.total_chunks}
+- Data read: #{Float.round(stats.total_chunks * stats.bytes_per_chunk / 1_048_576, 1)} MB
+"""
+
+Kino.Markdown.new(chunk_stats)
+```
+
+```elixir
+# Compute temporal mean (chunk-by-chunk processing)
+temporal_mean = ChunkProcessor.compute_temporal_mean(datacube)
+
+IO.puts("\nTemporal mean computed:")
+IO.puts("  Result shape: #{inspect(Nx.shape(temporal_mean))}")
+IO.puts("  Result type: #{inspect(Nx.type(temporal_mean))}")
+```
+
+## Zonal Statistics Example
+
+Zonal statistics compute aggregates over spatial regions (zones). Common in:
+- Agricultural monitoring (field-level statistics)
+- Urban planning (neighborhood metrics)
+- Ecological studies (habitat analysis)
+- Disaster response (affected area assessment)
+
+**Example: Compute mean NDVI by elevation zone**
+
+```elixir
+defmodule ZonalStats do
+  @moduledoc """
+  Compute zonal statistics on datacube.
+  """
+
+  def compute_zonal_mean(datacube, zone_map) do
+    metadata = ExZarr.metadata(datacube)
+    {time_steps, _bands, height, width} = metadata.shape
+    {_t_chunk, _b_chunk, y_chunk, x_chunk} = metadata.chunks
+
+    # Get unique zones
+    zones =
+      zone_map
+      |> Nx.flatten()
+      |> Nx.to_flat_list()
+      |> Enum.uniq()
+      |> Enum.sort()
+
+    IO.puts("Computing zonal statistics for #{length(zones)} zones...")
+
+    # Initialize accumulators for each zone
+    zone_accumulators =
+      Map.new(zones, fn zone ->
+        {zone, %{sum_ndvi: 0.0, count: 0, pixel_list: []}}
+      end)
+
+    # Process spatially (accumulate over all time steps)
+    num_y_chunks = div(height, y_chunk)
+    num_x_chunks = div(width, x_chunk)
+    total_spatial_chunks = num_y_chunks * num_x_chunks
+
+    zone_results =
+      for y_idx <- 0..(num_y_chunks - 1),
+          x_idx <- 0..(num_x_chunks - 1),
+          reduce: zone_accumulators do
+        acc ->
+          chunk_num = y_idx * num_x_chunks + x_idx + 1
+          IO.write("\rProcessing spatial chunk #{chunk_num}/#{total_spatial_chunks}...")
+
+          y_start = y_idx * y_chunk
+          y_end = min(y_start + y_chunk - 1, height - 1)
+          x_start = x_idx * x_chunk
+          x_end = min(x_start + x_chunk - 1, width - 1)
+
+          # Read this spatial chunk for the last time step
+          # Bands: 0 (Red), 3 (NIR)
+          last_time = time_steps - 1
+          {:ok, red_chunk} = ExZarr.slice(datacube, {last_time..last_time, 0..0, y_start..y_end, x_start..x_end})
+          {:ok, nir_chunk} = ExZarr.slice(datacube, {last_time..last_time, 3..3, y_start..y_end, x_start..x_end})
+
+          # Get zone subset
+          zone_chunk = zone_map[y_start..y_end, x_start..x_end]
+
+          # Compute NDVI for chunk
+          red = red_chunk[0][0] |> Nx.as_type({:f, 32})
+          nir = nir_chunk[0][0] |> Nx.as_type({:f, 32})
+
+          numerator = Nx.subtract(nir, red)
+          denominator = Nx.add(nir, red)
+
+          ndvi =
+            Nx.select(
+              Nx.equal(denominator, 0),
+              0.0,
+              Nx.divide(numerator, denominator)
+            )
+
+          # Accumulate by zone
+          y_size = y_end - y_start + 1
+          x_size = x_end - x_start + 1
+
+          new_acc =
+            for y <- 0..(y_size - 1), x <- 0..(x_size - 1), reduce: acc do
+              zone_acc ->
+                zone_id = Nx.to_number(zone_chunk[y][x])
+                ndvi_value = Nx.to_number(ndvi[y][x])
+
+                Map.update!(zone_acc, zone_id, fn zone_data ->
+                  %{
+                    zone_data
+                    | sum_ndvi: zone_data.sum_ndvi + ndvi_value,
+                      count: zone_data.count + 1
+                  }
+                end)
+            end
+
+          new_acc
+      end
+
+    IO.puts(" Done!")
+
+    # Compute means
+    zone_means =
+      Map.new(zone_results, fn {zone, data} ->
+        mean_ndvi = if data.count > 0, do: data.sum_ndvi / data.count, else: 0.0
+        {zone, %{mean_ndvi: mean_ndvi, pixel_count: data.count}}
+      end)
+
+    zone_means
+  end
+
+  def create_elevation_zones(height, width, num_zones \\ 5) do
+    # Create synthetic elevation zones (bands across the image)
+    for y <- 0..(height - 1), x <- 0..(width - 1) do
+      # Assign zone based on Y coordinate (horizontal bands)
+      div(y * num_zones, height)
+    end
+    |> Nx.tensor(type: {:s, 32})
+    |> Nx.reshape({height, width})
+  end
+end
+
+# Create elevation zones
+IO.puts("Creating elevation zone map...")
+zone_map = ZonalStats.create_elevation_zones(height, width, 5)
+
+IO.puts("Zone map created: #{inspect(Nx.shape(zone_map))}")
+IO.puts("Zones: 0 (low elevation) to 4 (high elevation)")
+```
+
+```elixir
+# Compute zonal statistics
+zonal_results = ZonalStats.compute_zonal_mean(datacube, zone_map)
+
+# Display results
+zonal_table_data =
+  zonal_results
+  |> Enum.sort_by(fn {zone, _data} -> zone end)
+  |> Enum.map(fn {zone, data} ->
+    %{
+      "Zone" => zone,
+      "Elevation" => elevation_label(zone),
+      "Mean NDVI" => Float.round(data.mean_ndvi, 3),
+      "Pixels" => data.pixel_count
+    }
+  end)
+
+defp elevation_label(0), do: "Low"
+defp elevation_label(1), do: "Medium-Low"
+defp elevation_label(2), do: "Medium"
+defp elevation_label(3), do: "Medium-High"
+defp elevation_label(4), do: "High"
+
+Kino.DataTable.new(zonal_table_data)
+```
+
+```elixir
+# Compute NDVI time series for a sample location
+sample_y = 500
+sample_x = 500
+
+ndvi_time_series = ChunkProcessor.compute_ndvi_time_series(datacube, sample_y, sample_x)
+
+IO.puts("NDVI Time Series at (#{sample_y}, #{sample_x}):")
+IO.inspect(Enum.map(ndvi_time_series, &Float.round(&1, 3)))
+```
+
+**Key Observations:**
+
+1. **Chunk-by-chunk processing** enables computation on large datasets
+2. **Spatial chunking** optimizes for region-based queries
+3. **Temporal chunking** optimizes for time series analysis
+4. **Zone-based aggregation** reduces millions of pixels to summary statistics
+
+## Visualization: Spatial Map
+
+Visualize a spatial slice of the datacube using VegaLite.
+
+```elixir
+alias VegaLite, as: Vl
+
+# Extract a spatial slice: last time step, Red band
+last_time = time_steps - 1
+red_band = 0
+
+{:ok, spatial_slice} = ExZarr.slice(datacube, {last_time..last_time, red_band..red_band, 0..(height - 1), 0..(width - 1)})
+
+# Downsample for visualization (every 10th pixel)
+downsample_factor = 10
+viz_height = div(height, downsample_factor)
+viz_width = div(width, downsample_factor)
+
+viz_data =
+  for y <- 0..(viz_height - 1), x <- 0..(viz_width - 1) do
+    orig_y = y * downsample_factor
+    orig_x = x * downsample_factor
+    value = Nx.to_number(spatial_slice[0][0][orig_y][orig_x])
+
+    %{x: x, y: y, value: value}
+  end
+
+Vl.new(width: 500, height: 500, title: "Red Band - Month 12 (Downsampled 10x)")
+|> Vl.data_from_values(viz_data)
+|> Vl.mark(:rect)
+|> Vl.encode_field(:x, "x", type: :ordinal, title: "X (pixels / 10)")
+|> Vl.encode_field(:y, "y", type: :ordinal, title: "Y (pixels / 10)", sort: "descending")
+|> Vl.encode_field(:color, "value",
+  type: :quantitative,
+  scale: [scheme: "viridis"],
+  title: "DN"
+)
+```
+
+```elixir
+# Visualize temporal mean (Green band)
+green_band = 1
+green_mean_slice = temporal_mean[green_band]
+
+# Downsample
+viz_mean_data =
+  for y <- 0..(viz_height - 1), x <- 0..(viz_width - 1) do
+    orig_y = y * downsample_factor
+    orig_x = x * downsample_factor
+    value = Nx.to_number(green_mean_slice[orig_y][orig_x])
+
+    %{x: x, y: y, value: value}
+  end
+
+Vl.new(width: 500, height: 500, title: "Green Band - Temporal Mean (Downsampled 10x)")
+|> Vl.data_from_values(viz_mean_data)
+|> Vl.mark(:rect)
+|> Vl.encode_field(:x, "x", type: :ordinal, title: "X (pixels / 10)")
+|> Vl.encode_field(:y, "y", type: :ordinal, title: "Y (pixels / 10)", sort: "descending")
+|> Vl.encode_field(:color, "value",
+  type: :quantitative,
+  scale: [scheme: "greens"],
+  title: "Mean DN"
+)
+```
+
+```elixir
+# Visualize NDVI time series
+months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+ndvi_chart_data =
+  ndvi_time_series
+  |> Enum.with_index()
+  |> Enum.map(fn {ndvi, idx} ->
+    %{month: Enum.at(months, idx), ndvi: ndvi}
+  end)
+
+Vl.new(width: 600, height: 300, title: "NDVI Time Series - Pixel (500, 500)")
+|> Vl.data_from_values(ndvi_chart_data)
+|> Vl.mark(:line, point: true)
+|> Vl.encode_field(:x, "month", type: :ordinal, title: "Month")
+|> Vl.encode_field(:y, "ndvi", type: :quantitative, title: "NDVI", scale: [domain: [-1, 1]])
+```
+
+## Future Directions
+
+### Icechunk: Versioning for Zarr
+
+**What is Icechunk?**
+
+Icechunk provides version control for Zarr datastores, similar to Git for code:
+- Commit snapshots of data state
+- Branch for parallel workflows
+- Merge changes from multiple sources
+- Time-travel to historical versions
+
+**Benefits:**
+
+1. **Reproducibility**: Exact data version used in analysis
+2. **Collaboration**: Multiple users edit without conflicts
+3. **Provenance**: Track data lineage and transformations
+4. **Experimentation**: Test changes without affecting production
+
+**Current Status:**
+
+Icechunk is in active development (Python implementation available). ExZarr integration would require:
+- Version metadata management
+- Snapshot coordination with storage backend
+- Merge conflict resolution strategies
+- Transaction support for atomic updates
+
+**Simulating Versioning with Groups:**
+
+Without Icechunk, you can simulate versioning using Zarr groups:
+
+```elixir
+# Simulate version control with groups
+{:ok, versions_root} = ExZarr.Group.create(storage: :memory, path: "/versions")
+
+# Create version 1: baseline
+{:ok, v1_group} = ExZarr.Group.create_group(versions_root, "v1_baseline")
+
+{:ok, v1_array} =
+  ExZarr.Group.create_array(v1_group, "data",
+    shape: {100, 100},
+    chunks: {50, 50},
+    dtype: :float32
+  )
+
+v1_data = Nx.random_uniform({100, 100}, type: {:f, 32})
+ExZarr.Nx.to_zarr(v1_data, v1_array)
+
+v1_attrs = %{
+  "version" => "1.0",
+  "created_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+  "description" => "Baseline version",
+  "author" => "analyst@example.com"
+}
+
+ExZarr.Group.update_attributes(v1_group, v1_attrs)
+
+# Create version 2: processed
+{:ok, v2_group} = ExZarr.Group.create_group(versions_root, "v2_processed")
+
+{:ok, v2_array} =
+  ExZarr.Group.create_array(v2_group, "data",
+    shape: {100, 100},
+    chunks: {50, 50},
+    dtype: :float32
+  )
+
+# Apply transformation (e.g., normalization)
+v2_data = Nx.divide(v1_data, Nx.mean(v1_data))
+ExZarr.Nx.to_zarr(v2_data, v2_array)
+
+v2_attrs = %{
+  "version" => "2.0",
+  "created_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+  "description" => "Normalized version",
+  "parent_version" => "1.0",
+  "author" => "analyst@example.com"
+}
+
+ExZarr.Group.update_attributes(v2_group, v2_attrs)
+
+IO.puts("Created version hierarchy:")
+IO.puts("  - v1_baseline: original data")
+IO.puts("  - v2_processed: normalized")
+```
+
+**Limitations of Group-Based Versioning:**
+
+- No automatic diff/merge
+- No space efficiency (full copies)
+- Manual provenance tracking
+- No transaction guarantees
+
+### Zarr v3
+
+**ExZarr Fully Supports Zarr v3:**
+
+ExZarr provides production-ready support for Zarr v3 with all core features implemented:
+
+1. **Unified Codec Pipeline**: Composable compression/encoding stages
+2. **Improved Metadata**: Flexible `zarr.json` format
+3. **Hierarchical Chunk Storage**: `c/` directory structure
+4. **Automatic Version Detection**: Seamlessly work with v2 and v3 arrays
+5. **Python Interoperability**: Full compatibility with zarr-python 3.x
+
+**Creating v3 Arrays:**
+
+```elixir
+# Create a Zarr v3 array (fully supported)
+{:ok, v3_array} = ExZarr.create(
+  shape: {10_000, 10_000},
+  chunks: {100, 100},
+  dtype: :float32,
+  codecs: [
+    %{name: "bytes"},
+    %{name: "gzip", configuration: %{level: 5}}
+  ],
+  zarr_version: 3,
+  storage: :memory
+)
+
+IO.puts("Zarr v3 array created successfully")
+```
+
+**v3 Advanced Features:**
+
+ExZarr v3 includes:
+- Unified codec pipeline with configurable stages
+- Improved metadata with embedded attributes
+- Slash-separated chunk keys for better organization
+- Automatic conversion from v2-style configuration
+
+**Sharding (v3 Extension):**
+
+Sharding is a v3 extension that groups multiple chunks into single objects:
+
+```elixir
+# Conceptual sharding structure (extension feature)
+v3_sharding_concept = %{
+  "shape" => {10_000, 10_000},
+  "chunks" => {100, 100},
+  "shards" => {1000, 1000},
+  "chunks_per_shard" => {10, 10},
+  "benefit" => "100 chunks stored in 1 S3 object instead of 100",
+  "use_case" => "Reduce LIST operations on object storage"
+}
+
+IO.inspect(v3_sharding_concept, label: "Zarr v3 Sharding Concept")
+```
+
+Note: Sharding is an optional v3 extension. Core v3 features are fully implemented in ExZarr.
+
+**Version Selection:**
+
+- Use v3 for new projects (recommended)
+- Use v2 for compatibility with older Python tools
+- Both versions fully supported and production-ready
+- Automatic detection when opening existing arrays
+
+## Performance Characteristics
+
+Understanding performance trade-offs in datacube operations:
+
+```elixir
+defmodule PerformanceAnalysis do
+  def analyze_access_patterns(shape, chunks) do
+    {time_steps, bands, height, width} = shape
+    {t_chunk, b_chunk, y_chunk, x_chunk} = chunks
+
+    """
+    ## Access Pattern Performance Analysis
+
+    **Dataset:** #{time_steps}t × #{bands}b × #{height}y × #{width}x
+    **Chunks:** #{t_chunk}t × #{b_chunk}b × #{y_chunk}y × #{x_chunk}x
+
+    ### Pattern 1: Single Pixel Time Series
+    - **Goal:** Extract all time steps for one spatial location
+    - **Chunks accessed:** #{time_steps}
+    - **Data read:** #{time_steps * b_chunk * y_chunk * x_chunk * 2} bytes
+    - **Efficiency:** Low (reads full spatial chunks for 1 pixel)
+    - **Optimization:** Use smaller spatial chunks or rechunk for time series access
+
+    ### Pattern 2: Single Time Slice
+    - **Goal:** Extract one time step, all spatial pixels
+    - **Chunks accessed:** #{div(height, y_chunk) * div(width, x_chunk)}
+    - **Data read:** #{div(height, y_chunk) * div(width, x_chunk) * t_chunk * b_chunk * y_chunk * x_chunk * 2} bytes
+    - **Efficiency:** High (spatial chunks align with query)
+    - **Use case:** Spatial analysis, mapping
+
+    ### Pattern 3: Spatial Subset, All Times
+    - **Goal:** 500×500 region across all time steps
+    - **Chunks accessed:** #{time_steps * div(500, y_chunk) * div(500, x_chunk)}
+    - **Data read:** ~#{time_steps * div(500, y_chunk) * div(500, x_chunk) * t_chunk * b_chunk * y_chunk * x_chunk * 2} bytes
+    - **Efficiency:** Medium (balanced spatial/temporal access)
+    - **Use case:** Regional time series analysis
+
+    ### Pattern 4: Full Scan
+    - **Goal:** Process entire datacube
+    - **Chunks accessed:** #{div(time_steps, t_chunk) * div(height, y_chunk) * div(width, x_chunk)}
+    - **Data read:** All (#{time_steps * bands * height * width * 2} bytes)
+    - **Efficiency:** High (sequential chunk access)
+    - **Use case:** Global statistics, model training
+
+    ### Recommendations:
+
+    **For Time Series Analysis:**
+    - Use temporal chunks = 1
+    - Larger spatial chunks acceptable
+    - Consider rechunking if switching workflows
+
+    **For Spatial Analysis:**
+    - Use spatial chunks matching query size
+    - Temporal chunks = 1 or all time steps
+    - Optimize for single-time access
+
+    **For Mixed Workflows:**
+    - Balanced chunks (current configuration)
+    - Accept moderate inefficiency for flexibility
+    - Consider multiple representations (spatial + temporal optimized)
+    """
+  end
+end
+
+PerformanceAnalysis.analyze_access_patterns(shape, chunks)
+|> Kino.Markdown.new()
+```
+
+## Summary
+
+This notebook demonstrated datacube construction and chunk-based computation:
+
+**Key Concepts:**
+
+1. **Datacube Structure**: 4D arrays (time × band × y × x) for spatiotemporal data
+2. **Chunk Strategy**: Optimize for access patterns (spatial vs temporal queries)
+3. **Chunk-Based Computation**: Process large datasets incrementally
+4. **Zonal Statistics**: Aggregate over spatial regions
+5. **Access Pattern Analysis**: Understand performance implications
+
+**Chunk-Aware Processing:**
+
+- Enables datasets larger than memory
+- Supports parallel computation
+- Reduces I/O by reading only required chunks
+- Requires explicit iteration over chunk grid
+
+**Performance Considerations:**
+
+- Chunk size affects both memory and I/O efficiency
+- Access patterns should match chunk layout
+- Cloud storage amplifies chunking impact (latency, cost)
+- Consider multiple representations for different workflows
+
+**Future Directions:**
+
+- **Icechunk**: Version control and provenance tracking
+- **Zarr v3 Sharding Extension**: Multi-chunk objects for reduced object count
+- **Distributed Computing**: Integration with GenStage/Flow
+- **Custom Codecs**: Domain-specific compression algorithms
+
+**Next Steps:**
+
+- Experiment with chunk sizes for your data
+- Profile access patterns in real workflows
+- Build reusable computation pipelines
+- Integrate with cloud storage backends
+- Explore distributed processing patterns
+
+## Open Questions
+
+**Optimal Chunking:**
+
+How do you choose chunk sizes for datasets with mixed access patterns?
+
+**Versioning Strategy:**
+
+What version control model best fits scientific datacube workflows?
+
+**Distributed Processing:**
+
+How can GenServer/GenStage coordinate parallel chunk processing across nodes?
+
+**Compression:**
+
+Which codecs work best for different satellite sensor types?
+
+**Cloud Optimization:**
+
+How do you minimize S3 request costs while maintaining good performance?
+
+**Interoperability:**
+
+How can ExZarr datacubes integrate with Python tools like Xarray, Dask, and Pangeo?
+
+Explore these questions as you build production datacube systems with ExZarr.

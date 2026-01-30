@@ -1,0 +1,942 @@
+# Xarray Introduction to Zarr: Groups and Attributes
+
+```elixir
+Mix.install([
+  {:ex_zarr, "~> 1.0"},
+  {:nx, "~> 0.7"},
+  {:kino, "~> 0.13"}
+])
+```
+
+## Introduction
+
+This notebook explores higher-level dataset organization using Zarr groups and attributes. While Xarray provides elegant abstractions for labeled, multi-dimensional arrays, ExZarr operates at a lower level, giving explicit control over structure.
+
+**What is Xarray?**
+
+Xarray is a Python library that extends NumPy with:
+- Named dimensions (e.g., "time", "latitude", "longitude")
+- Coordinate labels (e.g., timestamps, spatial coordinates)
+- Metadata and attributes
+- Automatic alignment and broadcasting
+
+**Xarray + Zarr:**
+
+Xarray can persist datasets to Zarr format, encoding:
+- Data variables as Zarr arrays
+- Coordinates as separate arrays
+- Dimension names and metadata as attributes
+- Hierarchical structure using Zarr groups
+
+**This Notebook:**
+
+We'll build similar structures manually using ExZarr groups and attributes, understanding:
+- How groups organize related arrays
+- How attributes store metadata and coordinates
+- What capabilities are lost without Xarray's abstractions
+- When manual control is beneficial
+
+## Groups as Datasets
+
+Zarr groups are containers that hold multiple arrays and nested groups. They enable hierarchical organization, similar to directories in a filesystem.
+
+**Use Cases:**
+- Organizing related variables (temperature, pressure, humidity)
+- Multi-resolution representations (pyramids, levels of detail)
+- Versioning or scenarios (baseline, scenario_a, scenario_b)
+- Separating raw data from processed results
+
+Let's create a weather dataset with multiple variables:
+
+```elixir
+# Create root group
+{:ok, root_group} = ExZarr.Group.create(storage: :memory, path: "/")
+
+IO.puts("Root group created")
+IO.inspect(root_group, label: "Root group")
+```
+
+```elixir
+# Create a weather dataset with multiple variables
+# Simulating a 7-day forecast with hourly data at 100 locations
+
+shape = {7, 24, 100}
+chunks = {1, 24, 50}
+
+# Temperature array (in Celsius)
+{:ok, temperature} =
+  ExZarr.Group.create_array(root_group, "temperature",
+    shape: shape,
+    chunks: chunks,
+    dtype: :float32
+  )
+
+# Humidity array (percentage)
+{:ok, humidity} =
+  ExZarr.Group.create_array(root_group, "humidity",
+    shape: shape,
+    chunks: chunks,
+    dtype: :float32
+  )
+
+# Pressure array (hPa)
+{:ok, pressure} =
+  ExZarr.Group.create_array(root_group, "pressure",
+    shape: shape,
+    chunks: chunks,
+    dtype: :float32
+  )
+
+IO.puts("Created three data arrays in root group:")
+IO.puts("  - temperature: #{inspect(shape)}")
+IO.puts("  - humidity: #{inspect(shape)}")
+IO.puts("  - pressure: #{inspect(shape)}")
+```
+
+```elixir
+# Write synthetic data to arrays
+generate_weather_data = fn base_value, variation ->
+  # Generate realistic-looking data with daily and spatial patterns
+  for day <- 0..6, hour <- 0..23, location <- 0..99 do
+    daily_cycle = :math.sin(hour * :math.pi() / 12)
+    spatial_var = :math.cos(location * :math.pi() / 50)
+    noise = (:rand.uniform() - 0.5) * variation
+
+    base_value + daily_cycle * variation + spatial_var * (variation / 2) + noise
+  end
+  |> Nx.tensor(type: {:f, 32})
+  |> Nx.reshape(shape)
+end
+
+# Generate and write data
+temp_data = generate_weather_data.(20.0, 8.0)
+humid_data = generate_weather_data.(65.0, 20.0)
+pressure_data = generate_weather_data.(1013.0, 15.0)
+
+ExZarr.Nx.to_zarr(temp_data, temperature)
+ExZarr.Nx.to_zarr(humid_data, humidity)
+ExZarr.Nx.to_zarr(pressure_data, pressure)
+
+IO.puts("Weather data written to arrays")
+```
+
+```elixir
+# List arrays in the group
+arrays = ExZarr.Group.list_arrays(root_group)
+
+IO.puts("Arrays in root group:")
+Enum.each(arrays, fn name -> IO.puts("  - #{name}") end)
+```
+
+**Key Concept: Groups as Containers**
+
+A Zarr group acts as a namespace for related arrays. Unlike standalone arrays, grouped arrays share context and can reference common coordinates or metadata.
+
+## Attributes as Coordinates and Labels
+
+Attributes provide metadata for groups and arrays. In Xarray, coordinates are first-class objects. In ExZarr, we simulate coordinates using attributes.
+
+**Strategy:**
+- Store coordinate values as separate arrays
+- Use attributes to indicate which arrays are coordinates
+- Store dimension names and metadata as attributes
+
+```elixir
+# Create coordinate arrays
+
+# Time coordinate: 7 days
+time_values =
+  for day <- 0..6 do
+    DateTime.utc_now()
+    |> DateTime.add(day, :day)
+    |> DateTime.to_unix()
+  end
+  |> Nx.tensor(type: {:s, 64})
+  |> Nx.reshape({7})
+
+{:ok, time_coord} =
+  ExZarr.Group.create_array(root_group, "time",
+    shape: {7},
+    chunks: {7},
+    dtype: :int64
+  )
+
+ExZarr.Nx.to_zarr(time_values, time_coord)
+
+# Hour coordinate: 24 hours
+hour_values = Nx.iota({24}, type: {:s, 32})
+
+{:ok, hour_coord} =
+  ExZarr.Group.create_array(root_group, "hour",
+    shape: {24},
+    chunks: {24},
+    dtype: :int32
+  )
+
+ExZarr.Nx.to_zarr(hour_values, hour_coord)
+
+# Location coordinate: 100 locations (synthetic IDs)
+location_values = Nx.iota({100}, type: {:s, 32})
+
+{:ok, location_coord} =
+  ExZarr.Group.create_array(root_group, "location",
+    shape: {100},
+    chunks: {100},
+    dtype: :int32
+  )
+
+ExZarr.Nx.to_zarr(location_values, location_coord)
+
+IO.puts("Coordinate arrays created:")
+IO.puts("  - time: 7 days")
+IO.puts("  - hour: 24 hours")
+IO.puts("  - location: 100 locations")
+```
+
+```elixir
+# Add attributes to describe the dataset structure
+
+# Group-level attributes
+group_attrs = %{
+  "title" => "Weather Forecast Dataset",
+  "description" => "7-day hourly forecast for 100 locations",
+  "dimensions" => ["time", "hour", "location"],
+  "coordinates" => ["time", "hour", "location"],
+  "data_variables" => ["temperature", "humidity", "pressure"],
+  "created_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+}
+
+ExZarr.Group.update_attributes(root_group, group_attrs)
+
+# Temperature attributes
+temp_attrs = %{
+  "units" => "celsius",
+  "long_name" => "Air Temperature",
+  "dimensions" => ["time", "hour", "location"],
+  "valid_range" => [-50.0, 60.0]
+}
+
+ExZarr.update_attributes(temperature, temp_attrs)
+
+# Humidity attributes
+humid_attrs = %{
+  "units" => "percent",
+  "long_name" => "Relative Humidity",
+  "dimensions" => ["time", "hour", "location"],
+  "valid_range" => [0.0, 100.0]
+}
+
+ExZarr.update_attributes(humidity, humid_attrs)
+
+# Pressure attributes
+pressure_attrs = %{
+  "units" => "hPa",
+  "long_name" => "Atmospheric Pressure",
+  "dimensions" => ["time", "hour", "location"],
+  "valid_range" => [950.0, 1050.0]
+}
+
+ExZarr.update_attributes(pressure, pressure_attrs)
+
+# Time coordinate attributes
+time_attrs = %{
+  "units" => "seconds since 1970-01-01",
+  "long_name" => "Forecast Day",
+  "axis" => "T"
+}
+
+ExZarr.update_attributes(time_coord, time_attrs)
+
+# Hour coordinate attributes
+hour_attrs = %{
+  "units" => "hour of day",
+  "long_name" => "Hour",
+  "valid_range" => [0, 23]
+}
+
+ExZarr.update_attributes(hour_coord, hour_attrs)
+
+# Location coordinate attributes
+location_attrs = %{
+  "long_name" => "Location ID",
+  "description" => "Unique identifier for each location"
+}
+
+ExZarr.update_attributes(location_coord, location_attrs)
+
+IO.puts("Attributes added to group and arrays")
+```
+
+```elixir
+# Inspect group metadata
+defmodule GroupInspector do
+  @moduledoc """
+  Helper functions for inspecting Zarr group structure and metadata.
+  """
+
+  def format_group_structure(group) do
+    attrs = ExZarr.Group.attributes(group)
+    arrays = ExZarr.Group.list_arrays(group)
+    subgroups = ExZarr.Group.list_groups(group)
+
+    """
+    ## Group Structure
+
+    **Path:** #{ExZarr.Group.path(group)}
+
+    **Arrays:** #{length(arrays)}
+    #{format_array_list(arrays)}
+
+    **Subgroups:** #{length(subgroups)}
+    #{if length(subgroups) > 0, do: format_subgroup_list(subgroups), else: "None"}
+
+    **Attributes:**
+    #{format_attributes(attrs)}
+    """
+  end
+
+  def format_array_metadata(array) do
+    metadata = ExZarr.metadata(array)
+    attrs = ExZarr.attributes(array)
+
+    """
+    ## Array: #{metadata.name || "unnamed"}
+
+    **Shape:** #{inspect(metadata.shape)}
+    **Chunks:** #{inspect(metadata.chunks)}
+    **Data Type:** #{metadata.dtype}
+    **Compressor:** #{inspect(metadata.compressor)}
+
+    **Attributes:**
+    #{format_attributes(attrs)}
+    """
+  end
+
+  defp format_array_list(arrays) when length(arrays) == 0, do: "None"
+
+  defp format_array_list(arrays) do
+    arrays
+    |> Enum.map(fn name -> "- #{name}" end)
+    |> Enum.join("\n")
+  end
+
+  defp format_subgroup_list(subgroups) do
+    subgroups
+    |> Enum.map(fn name -> "- #{name}" end)
+    |> Enum.join("\n")
+  end
+
+  defp format_attributes(attrs) when map_size(attrs) == 0, do: "None"
+
+  defp format_attributes(attrs) do
+    attrs
+    |> Enum.map(fn {key, value} ->
+      formatted_value = format_value(value)
+      "- **#{key}:** #{formatted_value}"
+    end)
+    |> Enum.join("\n")
+  end
+
+  defp format_value(value) when is_list(value) do
+    "[#{Enum.join(value, ", ")}]"
+  end
+
+  defp format_value(value) when is_map(value) do
+    inspect(value)
+  end
+
+  defp format_value(value), do: to_string(value)
+
+  def format_dataset_summary(group) do
+    attrs = ExZarr.Group.attributes(group)
+    coords = Map.get(attrs, "coordinates", [])
+    data_vars = Map.get(attrs, "data_variables", [])
+
+    """
+    ## Dataset Summary
+
+    **Title:** #{Map.get(attrs, "title", "Untitled")}
+    **Description:** #{Map.get(attrs, "description", "No description")}
+
+    **Dimensions:**
+    #{format_list(Map.get(attrs, "dimensions", []))}
+
+    **Coordinates (#{length(coords)}):**
+    #{format_list(coords)}
+
+    **Data Variables (#{length(data_vars)}):**
+    #{format_list(data_vars)}
+
+    **Created:** #{Map.get(attrs, "created_at", "Unknown")}
+    """
+  end
+
+  defp format_list([]), do: "None"
+  defp format_list(items), do: Enum.map(items, fn item -> "- #{item}" end) |> Enum.join("\n")
+end
+
+# Display group structure
+root_group
+|> GroupInspector.format_group_structure()
+|> Kino.Markdown.new()
+```
+
+```elixir
+# Display dataset summary
+root_group
+|> GroupInspector.format_dataset_summary()
+|> Kino.Markdown.new()
+```
+
+```elixir
+# Display individual array metadata
+temperature
+|> GroupInspector.format_array_metadata()
+|> Kino.Markdown.new()
+```
+
+**Key Concept: Attributes as Metadata**
+
+Without Xarray:
+- Coordinates are just regular arrays
+- Dimension names exist only in attributes
+- No automatic alignment or broadcasting
+- Manual tracking of relationships between arrays
+
+With Xarray:
+- Coordinates are labeled and indexable
+- Dimensions are first-class objects
+- Automatic alignment across operations
+- Built-in plotting and analysis tools
+
+## Multi-Resolution and Multi-Group Layouts
+
+Zarr groups can be nested to create hierarchical structures. Common patterns:
+
+1. **Multi-resolution (Pyramids):** Store same data at multiple resolutions
+2. **Scenarios:** Separate groups for different model runs or experiments
+3. **Time periods:** Organize by year/month/day
+4. **Data stages:** Raw, processed, analyzed
+
+Let's create a multi-resolution image pyramid:
+
+```elixir
+# Create a multi-resolution pyramid structure
+{:ok, pyramid_root} = ExZarr.Group.create(storage: :memory, path: "/pyramid")
+
+# Original resolution: 1024x1024
+{:ok, level_0_group} = ExZarr.Group.create_group(pyramid_root, "level_0")
+
+{:ok, level_0_array} =
+  ExZarr.Group.create_array(level_0_group, "image",
+    shape: {1024, 1024},
+    chunks: {256, 256},
+    dtype: :uint8
+  )
+
+# Level 1: 512x512 (2x downsampled)
+{:ok, level_1_group} = ExZarr.Group.create_group(pyramid_root, "level_1")
+
+{:ok, level_1_array} =
+  ExZarr.Group.create_array(level_1_group, "image",
+    shape: {512, 512},
+    chunks: {256, 256},
+    dtype: :uint8
+  )
+
+# Level 2: 256x256 (4x downsampled)
+{:ok, level_2_group} = ExZarr.Group.create_group(pyramid_root, "level_2")
+
+{:ok, level_2_array} =
+  ExZarr.Group.create_array(level_2_group, "image",
+    shape: {256, 256},
+    chunks: {256, 256},
+    dtype: :uint8
+  )
+
+# Level 3: 128x128 (8x downsampled)
+{:ok, level_3_group} = ExZarr.Group.create_group(pyramid_root, "level_3")
+
+{:ok, level_3_array} =
+  ExZarr.Group.create_array(level_3_group, "image",
+    shape: {128, 128},
+    chunks: {128, 128},
+    dtype: :uint8
+  )
+
+IO.puts("Created multi-resolution pyramid:")
+IO.puts("  - Level 0: 1024x1024")
+IO.puts("  - Level 1: 512x512")
+IO.puts("  - Level 2: 256x256")
+IO.puts("  - Level 3: 128x128")
+```
+
+```elixir
+# Add pyramid metadata
+pyramid_attrs = %{
+  "multiscales" => [
+    %{
+      "version" => "0.4",
+      "name" => "example_pyramid",
+      "datasets" => [
+        %{"path" => "level_0", "scale" => 1.0},
+        %{"path" => "level_1", "scale" => 2.0},
+        %{"path" => "level_2", "scale" => 4.0},
+        %{"path" => "level_3", "scale" => 8.0}
+      ],
+      "type" => "downsample",
+      "metadata" => %{
+        "description" => "Image pyramid with 4 resolution levels",
+        "method" => "synthetic generation"
+      }
+    }
+  ]
+}
+
+ExZarr.Group.update_attributes(pyramid_root, pyramid_attrs)
+
+# Generate synthetic image data at each level
+generate_image = fn size ->
+  for i <- 0..(size - 1), j <- 0..(size - 1) do
+    # Create a pattern: checkerboard with gradient
+    checker = rem(div(i, 32) + div(j, 32), 2) * 128
+    gradient = div(i * 255, size)
+    min(255, checker + gradient)
+  end
+  |> Nx.tensor(type: {:u, 8})
+  |> Nx.reshape({size, size})
+end
+
+ExZarr.Nx.to_zarr(generate_image.(1024), level_0_array)
+ExZarr.Nx.to_zarr(generate_image.(512), level_1_array)
+ExZarr.Nx.to_zarr(generate_image.(256), level_2_array)
+ExZarr.Nx.to_zarr(generate_image.(128), level_3_array)
+
+IO.puts("Image data generated for all levels")
+```
+
+```elixir
+# Inspect pyramid structure
+pyramid_root
+|> GroupInspector.format_group_structure()
+|> Kino.Markdown.new()
+```
+
+```elixir
+# List all subgroups recursively
+defmodule GroupTraversal do
+  def list_hierarchy(group, indent \\ 0) do
+    prefix = String.duplicate("  ", indent)
+    path = ExZarr.Group.path(group)
+
+    IO.puts("#{prefix}Group: #{path}")
+
+    # List arrays
+    arrays = ExZarr.Group.list_arrays(group)
+
+    Enum.each(arrays, fn name ->
+      IO.puts("#{prefix}  Array: #{name}")
+    end)
+
+    # Recursively list subgroups
+    subgroups = ExZarr.Group.list_groups(group)
+
+    Enum.each(subgroups, fn name ->
+      {:ok, subgroup} = ExZarr.Group.open_group(group, name)
+      list_hierarchy(subgroup, indent + 1)
+    end)
+  end
+end
+
+IO.puts("Pyramid hierarchy:")
+GroupTraversal.list_hierarchy(pyramid_root)
+```
+
+**Key Concept: Hierarchical Organization**
+
+Groups enable:
+- Logical separation of related data
+- Multi-resolution representations
+- Scenario comparisons
+- Versioning and provenance tracking
+
+Without Xarray:
+- Manual navigation through group hierarchy
+- Explicit path management
+- No automatic resolution selection
+
+With Xarray:
+- Integrated multi-resolution support (via plugins)
+- Automatic level-of-detail selection
+- Seamless navigation
+
+## Reading Subsets
+
+Reading data from grouped structures requires explicit path navigation and coordinate interpretation.
+
+```elixir
+# Read a subset from the weather dataset
+
+# Read temperature for day 3, all hours, locations 20-30
+{:ok, temp_subset} = ExZarr.slice(temperature, {3..3, 0..23, 20..30})
+
+IO.puts("Temperature subset shape: #{inspect(Nx.shape(temp_subset))}")
+IO.puts("First 5 hours at location 20:")
+IO.inspect(temp_subset[0][0..4][0] |> Nx.to_list())
+```
+
+```elixir
+# Read corresponding coordinates
+{:ok, time_day_3} = ExZarr.slice(time_coord, {3..3})
+{:ok, hours_all} = ExZarr.slice(hour_coord, {0..23})
+{:ok, locations_subset} = ExZarr.slice(location_coord, {20..30})
+
+time_value = Nx.to_number(time_day_3[0])
+time_formatted = DateTime.from_unix!(time_value) |> DateTime.to_date() |> Date.to_string()
+
+IO.puts("\nSubset coordinates:")
+IO.puts("  Time: #{time_formatted}")
+IO.puts("  Hours: #{inspect(Nx.to_list(hours_all)[0..4])} ... (24 total)")
+IO.puts("  Locations: #{inspect(Nx.to_list(locations_subset)[0..5])} ... (11 total)")
+```
+
+```elixir
+# Compare values across variables at a specific point
+read_point = fn array, day, hour, location ->
+  {:ok, value} = ExZarr.slice(array, {day..day, hour..hour, location..location})
+  Nx.to_number(value[0][0][0])
+end
+
+day = 3
+hour = 12
+location = 25
+
+temp_val = read_point.(temperature, day, hour, location)
+humid_val = read_point.(humidity, day, hour, location)
+pressure_val = read_point.(pressure, day, hour, location)
+
+# Get coordinate labels
+{:ok, time_val} = ExZarr.slice(time_coord, {day..day})
+time_str = DateTime.from_unix!(Nx.to_number(time_val[0])) |> DateTime.to_string()
+
+comparison = """
+## Weather at Specific Point
+
+**Location:** #{location}
+**Time:** #{time_str}
+**Hour:** #{hour}:00
+
+| Variable | Value | Units |
+|----------|-------|-------|
+| Temperature | #{Float.round(temp_val, 1)} | °C |
+| Humidity | #{Float.round(humid_val, 1)} | % |
+| Pressure | #{Float.round(pressure_val, 1)} | hPa |
+"""
+
+Kino.Markdown.new(comparison)
+```
+
+```elixir
+# Read from multi-resolution pyramid
+read_pyramid_level = fn level ->
+  group_name = "level_#{level}"
+  {:ok, level_group} = ExZarr.Group.open_group(pyramid_root, group_name)
+  {:ok, image_array} = ExZarr.Group.open_array(level_group, "image")
+
+  metadata = ExZarr.metadata(image_array)
+
+  # Read a small patch (top-left 32x32)
+  size = elem(metadata.shape, 0)
+  patch_size = min(32, size)
+  {:ok, patch} = ExZarr.slice(image_array, {0..(patch_size - 1), 0..(patch_size - 1)})
+
+  {level, metadata.shape, patch}
+end
+
+# Read from each pyramid level
+pyramid_samples =
+  for level <- 0..3 do
+    {level, shape, patch} = read_pyramid_level.(level)
+    {level, shape, Nx.mean(patch) |> Nx.to_number()}
+  end
+
+IO.puts("Pyramid level samples (32x32 patch statistics):\n")
+
+Enum.each(pyramid_samples, fn {level, shape, mean_value} ->
+  IO.puts("Level #{level} (#{inspect(shape)}): mean = #{Float.round(mean_value, 2)}")
+end)
+```
+
+**Key Concept: Manual Subset Reading**
+
+Without Xarray:
+- Explicit slicing by index position
+- Manual coordinate lookup
+- No label-based indexing
+- Coordinate alignment is your responsibility
+
+With Xarray:
+- Label-based selection (e.g., `ds.sel(time='2024-01-15')`)
+- Automatic coordinate alignment
+- Built-in interpolation
+- Integrated time/date handling
+
+## What is Lost Without Xarray
+
+ExZarr provides low-level control but lacks high-level abstractions:
+
+**Missing Capabilities:**
+
+1. **Named Dimensions**
+   - Xarray: `data.sel(latitude=45.0, longitude=-122.0)`
+   - ExZarr: Manual index calculation and slicing
+
+2. **Automatic Broadcasting**
+   - Xarray: Automatically aligns dimensions across operations
+   - ExZarr: Manual shape matching required
+
+3. **Label-Based Indexing**
+   - Xarray: Use coordinate values directly
+   - ExZarr: Translate labels to indices manually
+
+4. **Coordinate Arithmetic**
+   - Xarray: Time deltas, spatial distances computed automatically
+   - ExZarr: Manual calculation from coordinate arrays
+
+5. **Integrated Plotting**
+   - Xarray: Built-in visualization with labeled axes
+   - ExZarr: Manual plotting with VegaLite or other tools
+
+6. **Lazy Evaluation**
+   - Xarray: Dask integration for out-of-core computation
+   - ExZarr: Manual chunking and streaming
+
+7. **CF Conventions**
+   - Xarray: Automatic handling of climate/forecast metadata
+   - ExZarr: Manual attribute interpretation
+
+**When ExZarr is Preferable:**
+
+- Building custom data structures
+- Performance-critical applications needing explicit control
+- Integration with BEAM concurrency primitives
+- Streaming and incremental processing
+- Custom coordinate systems or non-standard layouts
+
+**When Xarray is Preferable:**
+
+- Scientific analysis with standard coordinate systems
+- Interactive exploration and visualization
+- Climate and weather data (CF conventions)
+- Time series with complex calendars
+- Multi-dimensional statistical operations
+
+## Metadata Table Inspection
+
+Create comprehensive metadata tables for documentation and validation:
+
+```elixir
+defmodule MetadataTable do
+  def format_dataset_table(group) do
+    attrs = ExZarr.Group.attributes(group)
+    data_vars = Map.get(attrs, "data_variables", [])
+
+    rows =
+      Enum.map(data_vars, fn var_name ->
+        case ExZarr.Group.open_array(group, var_name) do
+          {:ok, array} ->
+            metadata = ExZarr.metadata(array)
+            attrs = ExZarr.attributes(array)
+
+            %{
+              "Variable" => var_name,
+              "Shape" => inspect(metadata.shape),
+              "Type" => metadata.dtype,
+              "Units" => Map.get(attrs, "units", "-"),
+              "Description" => Map.get(attrs, "long_name", "-")
+            }
+
+          _ ->
+            nil
+        end
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    Kino.DataTable.new(rows)
+  end
+
+  def format_coordinates_table(group) do
+    attrs = ExZarr.Group.attributes(group)
+    coords = Map.get(attrs, "coordinates", [])
+
+    rows =
+      Enum.map(coords, fn coord_name ->
+        case ExZarr.Group.open_array(group, coord_name) do
+          {:ok, array} ->
+            metadata = ExZarr.metadata(array)
+            attrs = ExZarr.attributes(array)
+
+            # Read first and last values
+            {:ok, first_val} = ExZarr.slice(array, {0..0})
+            size = elem(metadata.shape, 0)
+            {:ok, last_val} = ExZarr.slice(array, {(size - 1)..(size - 1)})
+
+            first = Nx.to_number(first_val[0])
+            last = Nx.to_number(last_val[0])
+
+            %{
+              "Coordinate" => coord_name,
+              "Size" => size,
+              "Type" => metadata.dtype,
+              "Units" => Map.get(attrs, "units", "-"),
+              "Range" => "#{format_coord_value(first, coord_name)} to #{format_coord_value(last, coord_name)}"
+            }
+
+          _ ->
+            nil
+        end
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    Kino.DataTable.new(rows)
+  end
+
+  defp format_coord_value(value, "time") when is_integer(value) do
+    DateTime.from_unix!(value) |> DateTime.to_date() |> Date.to_string()
+  end
+
+  defp format_coord_value(value, _), do: to_string(value)
+
+  def format_attributes_table(array_or_group) do
+    attrs = ExZarr.attributes(array_or_group)
+
+    rows =
+      Enum.map(attrs, fn {key, value} ->
+        %{
+          "Attribute" => key,
+          "Value" => format_attr_value(value),
+          "Type" => type_name(value)
+        }
+      end)
+
+    Kino.DataTable.new(rows)
+  end
+
+  defp format_attr_value(value) when is_list(value) do
+    if length(value) > 5 do
+      preview = Enum.take(value, 5) |> Enum.join(", ")
+      "#{preview} ... (#{length(value)} items)"
+    else
+      Enum.join(value, ", ")
+    end
+  end
+
+  defp format_attr_value(value) when is_map(value) do
+    inspect(value, limit: 50)
+  end
+
+  defp format_attr_value(value), do: to_string(value)
+
+  defp type_name(value) when is_binary(value), do: "string"
+  defp type_name(value) when is_integer(value), do: "integer"
+  defp type_name(value) when is_float(value), do: "float"
+  defp type_name(value) when is_list(value), do: "list"
+  defp type_name(value) when is_map(value), do: "map"
+  defp type_name(_), do: "unknown"
+end
+
+# Display data variables table
+Kino.Markdown.new("### Data Variables")
+```
+
+```elixir
+MetadataTable.format_dataset_table(root_group)
+```
+
+```elixir
+# Display coordinates table
+Kino.Markdown.new("### Coordinates")
+```
+
+```elixir
+MetadataTable.format_coordinates_table(root_group)
+```
+
+```elixir
+# Display attributes for temperature array
+Kino.Markdown.new("### Temperature Array Attributes")
+```
+
+```elixir
+MetadataTable.format_attributes_table(temperature)
+```
+
+## Summary
+
+This notebook demonstrated higher-level dataset organization using Zarr groups and attributes:
+
+**Key Concepts:**
+
+1. **Groups as Datasets**: Organize related arrays in hierarchical structures
+2. **Attributes as Metadata**: Store dimension names, units, and descriptions
+3. **Coordinates via Attributes**: Simulate labeled dimensions manually
+4. **Multi-Resolution Layouts**: Pyramid structures for efficient access at different scales
+5. **Manual Subset Reading**: Explicit slicing and coordinate interpretation
+
+**What ExZarr Provides:**
+
+- Low-level control over structure and storage
+- Explicit group and attribute management
+- Integration with Nx for tensor operations
+- BEAM concurrency for parallel I/O
+- Flexible storage backends (memory, disk, S3, GCS)
+
+**What Xarray Provides:**
+
+- High-level labeled array abstractions
+- Automatic coordinate alignment
+- Integrated plotting and analysis
+- CF convention support
+- Lazy evaluation with Dask
+
+**Trade-offs:**
+
+- ExZarr: More code, more control, better integration with Elixir ecosystem
+- Xarray: Less code, more automation, better for standard scientific workflows
+
+**When to Use Which:**
+
+- Use ExZarr when building custom systems, integrating with BEAM services, or needing explicit control
+- Use Xarray when doing interactive analysis, standard scientific computing, or working with established formats
+
+**Next Steps:**
+
+- Explore consolidated metadata for faster access
+- Build custom coordinate indexing libraries
+- Integrate with Explorer for tabular views
+- Create domain-specific abstractions on top of ExZarr groups
+- Develop interoperability layers with Python Xarray
+
+## Open Questions
+
+**Coordinate Systems:**
+
+How can we build reusable coordinate indexing libraries in Elixir?
+
+**Performance:**
+
+What is the overhead of attribute-based coordinate lookup versus Xarray's optimized indexing?
+
+**Standards:**
+
+Should we adopt CF conventions or create Elixir-native metadata standards?
+
+**Tooling:**
+
+What developer tools would make group-based workflows more ergonomic in Livebook?
+
+**Integration:**
+
+How can ExZarr groups integrate with other Elixir data tools (Explorer, Scholar, Axon)?
+
+Explore these questions as you build real-world applications with ExZarr groups and attributes.
