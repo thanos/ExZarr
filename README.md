@@ -9,8 +9,11 @@
 
 Elixir implementation of [Zarr](https://zarr.dev): compressed, chunked, N-dimensional arrays designed for parallel computing and scientific data storage.
 
+**Full Zarr v3 Support:** ExZarr implements both Zarr v2 and v3 specifications with production-ready support for v3's unified codec pipeline, improved metadata format, and modern features. Automatic version detection ensures seamless interoperability.
+
 ## Features
 
+- **Zarr v3 and v2 Support** - Full implementation of both specifications with automatic version detection
 - **High Performance** - 26x faster multi-chunk reads with near-optimal scaling (see [Performance Guide](guides/performance.md))
 - **N-dimensional arrays** with support for 10 data types (int8-64, uint8-64, float32/64)
 - **Parallel chunk processing** - Automatic parallel I/O and decompression for large operations
@@ -19,8 +22,7 @@ Elixir implementation of [Zarr](https://zarr.dev): compressed, chunked, N-dimens
 - **Flexible storage** backends (in-memory, filesystem, and zip archive)
 - **Custom storage backends** with plugin architecture for S3, databases, and more
 - **Hierarchical groups** for organizing multiple arrays
-- **Zarr v2 and v3 specification** support with automatic version detection
-- **Full backward compatibility** - seamlessly work with both v2 and v3 arrays
+- **Full Python interoperability** - Read and write arrays compatible with zarr-python 2.x and 3.x
 - **Property-based testing** with comprehensive test coverage
 
 ## Installation
@@ -40,12 +42,26 @@ end
 ### Creating an Array
 
 ```elixir
-# Create a 2D array in memory
+# Create a Zarr v3 array (recommended for new projects)
 {:ok, array} = ExZarr.create(
   shape: {1000, 1000},
   chunks: {100, 100},
   dtype: :float64,
+  codecs: [
+    %{name: "bytes"},
+    %{name: "gzip", configuration: %{level: 5}}
+  ],
+  zarr_version: 3,
+  storage: :memory
+)
+
+# Or use v2 format for compatibility with older tools
+{:ok, array_v2} = ExZarr.create(
+  shape: {1000, 1000},
+  chunks: {100, 100},
+  dtype: :float64,
   compressor: :zlib,
+  zarr_version: 2,
   storage: :memory
 )
 ```
@@ -86,11 +102,11 @@ mix run benchmarks/slicing_bench_quick.exs
 
 ## Zarr Format Support
 
-ExZarr supports both Zarr v2 and v3 specifications. Arrays can be created in either format, and opening arrays automatically detects the version.
+ExZarr provides production-ready support for both Zarr v2 and v3 specifications. Arrays can be created in either format, and opening arrays automatically detects the version.
 
-### Zarr v3 (Recommended for New Projects)
+### Zarr v3 - Fully Supported (Recommended for New Projects)
 
-Zarr v3 introduces a unified codec pipeline and improved metadata format:
+Zarr v3 is fully implemented with a unified codec pipeline and improved metadata format:
 
 ```elixir
 # Create v3 array with unified codec pipeline

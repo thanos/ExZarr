@@ -14,7 +14,7 @@ ExZarr implements the Zarr specification entirely in Elixir, providing persisten
 - Cross-language data exchange (Elixir ↔ Python/Julia/R)
 
 **Production Status:**
-ExZarr v1.0.0+ is production-ready, with comprehensive test coverage including property-based tests and Python interoperability validation. The library implements both Zarr v2 (stable, widely supported) and Zarr v3 (modern, extended features) specifications.
+ExZarr v1.0.0+ is production-ready, with comprehensive test coverage including property-based tests and Python interoperability validation. The library provides full production support for both Zarr v2 and Zarr v3 specifications, with automatic format detection and seamless interoperability.
 
 **Not a Python Wrapper:**
 ExZarr does not wrap Python's zarr-python library or call Python code. It is a ground-up implementation in Elixir that reads and writes the same on-disk/cloud format, ensuring interoperability through specification compliance rather than library coupling.
@@ -251,16 +251,16 @@ Example:
 )
 ```
 
-### Zarr v3 (Modern, Extended Features)
+### Zarr v3 (Modern, Recommended for New Projects)
 
 Zarr v3 introduces improvements and new capabilities:
 
-- **Status**: Supported in ExZarr, requires zarr-python 3.0+ (beta as of 2026)
-- **Python compatibility**: Works with zarr-python v3 beta (less mature than v2)
+- **Status**: Fully implemented in ExZarr, production-ready
+- **Python compatibility**: Full interoperability with zarr-python 3.x
 - **File format**: Unified `zarr.json`, slash-separated chunk keys with prefix
 - **Codec configuration**: Explicit pipeline with user-controlled order
-- **New features**: Sharding (multiple chunks per storage object), dimension names, custom chunk grids
-- **Recommendation**: Use v3 for new projects that need advanced features
+- **Advanced features**: Sharding support (multiple chunks per storage object), dimension names, custom chunk grids
+- **Recommendation**: Use v3 for new projects (modern standard)
 
 Example:
 ```elixir
@@ -298,17 +298,19 @@ This allows applications to work with arrays created by different tools without 
 
 ### Choosing a Version
 
-**Use Zarr v2 when:**
-- Maximum compatibility with existing tools is required
-- Working with Python zarr-python 2.x (stable)
-- Sharing data with users on various platforms
-- Compatibility is more important than new features
-
-**Use Zarr v3 when:**
-- Need sharding to reduce API calls on cloud storage
+**Use Zarr v3 when (recommended default):**
+- Starting new projects (modern standard)
+- Need unified codec pipeline for flexibility
+- Want improved metadata format with embedded attributes
+- Require sharding to reduce API calls on cloud storage
 - Want dimension names for semantic array axes
-- Require custom chunk grids (irregular chunk sizes)
-- Working in a controlled environment where all tools support v3
+- Working with zarr-python 3.x or other modern Zarr implementations
+
+**Use Zarr v2 when:**
+- Maximum compatibility with older tools is required
+- Working with legacy Python zarr-python 2.x codebases
+- Sharing data with users on older platforms
+- Compatibility with legacy tools is more important than modern features
 
 **Migration:**
 ExZarr can read both formats, so migration is gradual. Existing v2 arrays can coexist with new v3 arrays. See the [V2 to V3 Migration Guide](../docs/V2_TO_V3_MIGRATION.md) for detailed conversion guidance.

@@ -77,7 +77,7 @@ Team B (Elixir) → Consume dataset for production workload
 
 ExZarr implements:
 - **Zarr v2:** Full compliance (stable, widely supported)
-- **Zarr v3:** Full compliance (modern features, requires zarr-python 3.0+)
+- **Zarr v3:** Full compliance, production-ready (modern features, works with zarr-python 3.x)
 
 When both sides follow the spec, arrays are interchangeable.
 
@@ -317,12 +317,16 @@ Data integrity verified!
 
 ### Best Practices for Python Compatibility
 
-**1. Use Zarr v2 format**
+**1. Choose appropriate Zarr version**
 ```elixir
-zarr_version: 2  # Wider tool support than v3
+# For modern Python tools (zarr-python 3.x)
+zarr_version: 3  # Recommended for new projects
+
+# For legacy compatibility (zarr-python 2.x)
+zarr_version: 2  # Maximum compatibility with older tools
 ```
 
-Zarr v2 is stable and supported by all major implementations. Zarr v3 requires zarr-python 3.0+ (beta as of 2026).
+Both Zarr v2 and v3 are production-ready in ExZarr. Use v3 for new projects with modern Python tools, or v2 for compatibility with older zarr-python 2.x installations.
 
 **2. Use standard compressors**
 ```elixir

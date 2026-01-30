@@ -7,11 +7,16 @@ defmodule ExZarr.Gallery.Pack do
   """
 
   @type dtype ::
-          :int8 | :uint8 |
-          :int16 | :uint16 |
-          :int32 | :uint32 |
-          :int64 | :uint64 |
-          :float32 | :float64
+          :int8
+          | :uint8
+          | :int16
+          | :uint16
+          | :int32
+          | :uint32
+          | :int64
+          | :uint64
+          | :float32
+          | :float64
 
   @spec itemsize(dtype()) :: pos_integer()
   def itemsize(:int8), do: 1
@@ -44,7 +49,8 @@ defmodule ExZarr.Gallery.Pack do
       |> IO.iodata_to_binary()
 
     if byte_size(bin) != expected_bytes do
-      raise ArgumentError, "packed binary size mismatch (got #{byte_size(bin)} expected #{expected_bytes})"
+      raise ArgumentError,
+            "packed binary size mismatch (got #{byte_size(bin)} expected #{expected_bytes})"
     end
 
     bin
@@ -58,7 +64,8 @@ defmodule ExZarr.Gallery.Pack do
     i = itemsize(dtype)
 
     if rem(byte_size(bin), i) != 0 do
-      raise ArgumentError, "binary size must be a multiple of itemsize=#{i} for dtype=#{inspect(dtype)}"
+      raise ArgumentError,
+            "binary size must be a multiple of itemsize=#{i} for dtype=#{inspect(dtype)}"
     end
 
     do_unpack(bin, dtype, [])

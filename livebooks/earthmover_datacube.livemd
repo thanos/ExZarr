@@ -785,20 +785,49 @@ IO.puts("  - v2_processed: normalized")
 
 ### Zarr v3
 
-**What's New in Zarr v3:**
+**ExZarr Fully Supports Zarr v3:**
 
-1. **Sharding**: Multiple chunks in one object (reduces object count)
-2. **Variable Chunking**: Irregular chunk sizes along dimensions
-3. **Codec Pipeline**: Composable compression/encoding stages
-4. **Improved Metadata**: More flexible, extensible format
-5. **Dimension Names**: First-class dimension labels
+ExZarr provides production-ready support for Zarr v3 with all core features implemented:
 
-**ExZarr v3 Support:**
+1. **Unified Codec Pipeline**: Composable compression/encoding stages
+2. **Improved Metadata**: Flexible `zarr.json` format
+3. **Hierarchical Chunk Storage**: `c/` directory structure
+4. **Automatic Version Detection**: Seamlessly work with v2 and v3 arrays
+5. **Python Interoperability**: Full compatibility with zarr-python 3.x
 
-ExZarr currently supports Zarr v2. V3 implementation considerations:
+**Creating v3 Arrays:**
 
 ```elixir
-# Conceptual v3 sharding structure
+# Create a Zarr v3 array (fully supported)
+{:ok, v3_array} = ExZarr.create(
+  shape: {10_000, 10_000},
+  chunks: {100, 100},
+  dtype: :float32,
+  codecs: [
+    %{name: "bytes"},
+    %{name: "gzip", configuration: %{level: 5}}
+  ],
+  zarr_version: 3,
+  storage: :memory
+)
+
+IO.puts("Zarr v3 array created successfully")
+```
+
+**v3 Advanced Features:**
+
+ExZarr v3 includes:
+- Unified codec pipeline with configurable stages
+- Improved metadata with embedded attributes
+- Slash-separated chunk keys for better organization
+- Automatic conversion from v2-style configuration
+
+**Sharding (v3 Extension):**
+
+Sharding is a v3 extension that groups multiple chunks into single objects:
+
+```elixir
+# Conceptual sharding structure (extension feature)
 v3_sharding_concept = %{
   "shape" => {10_000, 10_000},
   "chunks" => {100, 100},
@@ -811,12 +840,14 @@ v3_sharding_concept = %{
 IO.inspect(v3_sharding_concept, label: "Zarr v3 Sharding Concept")
 ```
 
-**Migration Path:**
+Note: Sharding is an optional v3 extension. Core v3 features are fully implemented in ExZarr.
 
-- Zarr v2 and v3 can coexist
-- Conversion tools can translate between formats
-- Choose v3 for new cloud-native workflows
-- Keep v2 for compatibility with existing tools
+**Version Selection:**
+
+- Use v3 for new projects (recommended)
+- Use v2 for compatibility with older Python tools
+- Both versions fully supported and production-ready
+- Automatic detection when opening existing arrays
 
 ## Performance Characteristics
 
@@ -915,7 +946,7 @@ This notebook demonstrated datacube construction and chunk-based computation:
 **Future Directions:**
 
 - **Icechunk**: Version control and provenance tracking
-- **Zarr v3**: Sharding, improved metadata, codec pipelines
+- **Zarr v3 Sharding Extension**: Multi-chunk objects for reduced object count
 - **Distributed Computing**: Integration with GenStage/Flow
 - **Custom Codecs**: Domain-specific compression algorithms
 
