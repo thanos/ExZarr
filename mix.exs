@@ -83,6 +83,9 @@ defmodule ExZarr.MixProject do
       # Observability
       {:telemetry, "~> 1.2"},
 
+      # Numerical computing (optional)
+      {:nx, "~> 0.7", optional: true},
+
       # Documentation
       {:ex_doc, "~> 0.31", only: :dev, runtime: false}
     ] ++
