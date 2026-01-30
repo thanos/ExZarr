@@ -1,7 +1,7 @@
 defmodule ExZarr.MixProject do
   use Mix.Project
 
-  @version "1.0.0"
+  @version "1.0.1"
   @source_url "https://github.com/thanos/ExZarr"
 
   def project do
@@ -118,8 +118,18 @@ defmodule ExZarr.MixProject do
         "Zarr Specification" => "https://zarr.dev"
       },
       maintainers: ["Thanos Vassilakis"],
-      files:
-        ~w(lib priv native .formatter.exs mix.exs README.md CHANGELOG.md INTEROPERABILITY.md LICENSE)
+      files: [
+        "lib",
+        # Only include NIFs, not PLTs
+        "priv/lib",
+        "native",
+        ".formatter.exs",
+        "mix.exs",
+        "README.md",
+        "CHANGELOG.md",
+        "INTEROPERABILITY.md",
+        "LICENSE"
+      ]
     ]
   end
 
