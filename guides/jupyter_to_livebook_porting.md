@@ -28,15 +28,40 @@ Senior engineers and scientific developers entering Zarr from the Elixir ecosyst
 
 ## Notebook Inventory
 
+### Purpose
+Establish which notebooks are worth porting and why.
+
 ### Canonical Set
 
-| Resource | Source | Core Concepts | Dependencies (Python) | Livebook Relevance |
-|----------|--------|---------------|----------------------|-------------------|
-| Zarr Fundamentals | zarr-developers/tutorials | shapes, dtypes, chunks, attributes | zarr, numpy | High (introductory, zero cloud dependencies) |
-| Cloud-Native Geospatial Zarr 2022 | zarr-developers/tutorials | S3-backed Zarr, chunk-aware slicing, lazy reads | zarr, s3fs, xarray, dask | High (cloud + parallelism demonstration) |
-| Xarray Introduction to Zarr | tutorial.xarray.dev | consolidated metadata, pyramidal datasets, multi-dimensional slicing | xarray, fsspec | Medium (concepts port, tooling differs) |
-| Earthmover CNG 2025 Workshop | earth-mover/workshop-cng-2025-zarr | GeoTIFF → Zarr, datacubes, Icechunk / versioning | xarray, rioxarray, icechunk | Medium-High (conceptual port, partial feature parity) |
-| Benchmarking Zarr vs Parquet | Element84 blog | retrieval patterns, access locality, performance comparison | pandas, zarr | Medium (benchmark logic portable, not datasets) |
+**Resource: Zarr Fundamentals**
+- Source: zarr-developers/tutorials
+- Core concepts: shapes, dtypes, chunks, attributes
+- Dependencies (Python): zarr, numpy
+- Livebook relevance: High (introductory, zero cloud dependencies)
+
+**Resource: Cloud-Native Geospatial Zarr 2022**
+- Source: zarr-developers/tutorials
+- Core concepts: S3-backed Zarr, chunk-aware slicing, lazy reads
+- Dependencies (Python): zarr, s3fs, xarray, dask
+- Livebook relevance: High (cloud + parallelism demonstration)
+
+**Resource: Xarray Introduction to Zarr**
+- Source: tutorial.xarray.dev
+- Core concepts: consolidated metadata, pyramidal datasets, multi-dimensional slicing
+- Dependencies (Python): xarray, fsspec
+- Livebook relevance: Medium (concepts port, tooling differs)
+
+**Resource: Earthmover CNG 2025 Workshop**
+- Source: earth-mover/workshop-cng-2025-zarr
+- Core concepts: GeoTIFF → Zarr, datacubes, Icechunk / versioning
+- Dependencies (Python): xarray, rioxarray, icechunk
+- Livebook relevance: Medium-High (conceptual port, partial feature parity)
+
+**Resource: Benchmarking Zarr vs Parquet**
+- Source: Element84 blog
+- Core concepts: retrieval patterns, access locality, performance comparison
+- Dependencies (Python): pandas, zarr
+- Livebook relevance: Medium (benchmark logic portable, not datasets)
 
 ---
 
@@ -44,63 +69,63 @@ Senior engineers and scientific developers entering Zarr from the Elixir ecosyst
 
 This template MUST be used for every notebook port.
 
-### Template Structure
+### Porting Prompt Template
 
-#### Purpose
+**Purpose:**
 State why this notebook is being ported and what the learner should understand at the end.
 
-#### Concept Mapping
-Explicitly list Python concepts and their Elixir equivalents:
-- NumPy → Nx
-- zarr-python → ExZarr
-- pandas display → Kino.DataTable
-- matplotlib → Kino.VegaLite
-- Dask → Task.async_stream / Flow (if applicable)
+**Concept Mapping:**
+- Explicitly list Python concepts and their Elixir equivalents:
+  - NumPy → Nx
+  - zarr-python → ExZarr
+  - pandas display → Kino.DataTable
+  - matplotlib → Kino.VegaLite
+  - Dask → Task.async_stream / Flow (if applicable)
 
-#### Structural Mapping
+**Structural Mapping:**
 - Notebook cells → Livebook sections
 - Markdown narrative → Livebook markdown blocks
 - Setup cell → Mix.install block
 
-#### Technical Requirements
-- Use Mix.install with pinned dependencies
-- Prefer ExZarr :memory backend unless cloud access is the point
-- Avoid hidden global state
-- Use explicit function calls instead of implicit notebook state
+**Technical Requirements:**
+- Use Mix.install with pinned dependencies.
+- Prefer ExZarr :memory backend unless cloud access is the point.
+- Avoid hidden global state.
+- Use explicit function calls instead of implicit notebook state.
 
-#### Pedagogical Requirements
-Each Livebook must:
-- Introduce concepts before code
-- Show intermediate inspection steps
-- Include at least one "change a parameter and observe" exercise
+**Pedagogical Requirements:**
+- Each Livebook must:
+  - introduce concepts before code
+  - show intermediate inspection steps
+  - include at least one "change a parameter and observe" exercise
 
-#### Output Requirements
-- All code must be Elixir
-- No Python snippets
-- No shell commands unless unavoidable
-- Clear separation between explanation and execution
+**Output Requirements:**
+- All code must be Elixir.
+- No Python snippets.
+- No shell commands unless unavoidable.
+- Clear separation between explanation and execution.
 
-#### Acceptance Criteria
-- A reader unfamiliar with Python can complete the notebook
-- Results are observable and inspectable
-- Failures are understandable
+**Acceptance Criteria:**
+- A reader unfamiliar with Python can complete the notebook.
+- Results are observable and inspectable.
+- Failures are understandable.
 
-#### Stop Condition
-End the port with a recap and open questions section.
+**Stop Condition:**
+- End the port with a recap and open questions section.
 
 ---
 
-## Porting Prompt 1: Zarr Fundamentals
+## Porting Prompt: Zarr Fundamentals → Livebook
 
-### Purpose
+**Purpose:**
 Introduce the Zarr data model using ExZarr and Nx with zero external dependencies.
 
-### Concept Mapping
+**Concept Mapping:**
 - NumPy arrays → Nx tensors
 - zarr.DirectoryStore → ExZarr :memory backend
 - z.info → custom ExZarr metadata inspection function
 
-### Required Sections
+**Required Sections:**
 1. Introduction: What problem Zarr solves
 2. Creating an array (shape, dtype, chunks)
 3. Writing data
@@ -109,177 +134,35 @@ Introduce the Zarr data model using ExZarr and Nx with zero external dependencie
 6. Exercise: change chunk size
 7. Recap
 
-### Technical Requirements
+**Technical Requirements:**
 - Use Mix.install([:ex_zarr, :nx, :kino])
 - Create a 1000x1000 Nx tensor
 - Store using chunked layout
 - Provide a helper that formats metadata as a Markdown table
 
-### Visualization
+**Visualization:**
 - Optional heatmap slice via VegaLite
 
-### Exercise
-Change chunk size and observe:
-- Number of chunks
-- Metadata changes
+**Exercise:**
+- Change chunk size and observe:
+  - number of chunks
+  - metadata changes
 
-### Validation Checklist
-- [ ] Mix.install block present
-- [ ] shape, chunks, dtype correctly mapped
-- [ ] Slicing returns expected values
-- [ ] Metadata readable without spec knowledge
-
----
-
-## Porting Prompt 2: Cloud-Native Geospatial Zarr 2022
-
-### Purpose
-Demonstrate cloud-native access patterns and selective chunk fetching.
-
-### Concept Mapping
-- s3fs → ExZarr S3 backend or ExAws.S3
-- Dask parallelism → Task.async_stream
-
-### Required Sections
-1. Cloud object storage and Zarr
-2. Opening a remote Zarr store
-3. Chunk-aware slicing
-4. Parallel reads
-5. Aggregation example (mean over time)
-
-### Technical Requirements
-- Use Livebook secrets for credentials
-- Show configuration without hardcoding secrets
-- Use Task.async_stream for parallel chunk reads
-
-### Inspection
-Use Kino.inspect to show:
-- Which chunks are fetched
-- When network calls occur
-
-### Advanced Section
-Compute mean across one dimension while streaming chunks
-
-### Validation Checklist
-- [ ] Secrets not embedded in code
-- [ ] Parallel logic handles failures
-- [ ] Numerical results match published reference values
+**Validation Checklist:**
+- Mix.install block present
+- shape, chunks, dtype correctly mapped
+- slicing returns expected values
+- metadata readable without spec knowledge
+- NO emoji
 
 ---
 
-## Porting Prompt 3: Xarray Introduction to Zarr
-
-### Purpose
-Teach higher-level dataset organization concepts without Xarray.
-
-### Concept Mapping
-- Xarray Dataset → Zarr groups + attributes
-- Consolidated metadata → group-level metadata access
-
-### Required Sections
-1. Groups as datasets
-2. Attributes as coordinates / labels
-3. Multi-resolution or multi-group layouts
-4. Reading subsets
-
-### Technical Requirements
-- Use ExZarr groups explicitly
-- Simulate coordinates via attributes
-- Explain what is lost without Xarray
-
-### Visualization
-Table-based inspection of group metadata
-
-### Validation Checklist
-- [ ] Group hierarchy is clear
-- [ ] Attributes are readable and meaningful
-- [ ] Limitations are explicitly stated
-
----
-
-## Porting Prompt 4: Earthmover CNG 2025 Workshop
-
-### Purpose
-Demonstrate datacube-style analysis and chunk-based computation.
-
-### Concept Mapping
-- GeoTIFF ingestion → synthetic or preprocessed arrays
-- Icechunk versioning → simulated via groups (if unsupported)
-
-### Required Sections
-1. What is a datacube
-2. Building a 4D Zarr structure
-3. Chunk-aware computation
-4. Zonal statistics example
-5. Future directions (Icechunk, Zarr v3)
-
-### Technical Requirements
-- Build a 4D array (time, band, y, x)
-- Perform computation chunk-by-chunk
-- Explain versioning conceptually if not implemented
-
-### Visualization
-VegaLite spatial map or slice
-
-### Validation Checklist
-- [ ] Coordinates handled consistently
-- [ ] Chunk-level computation is explicit
-- [ ] Performance characteristics discussed
-
----
-
-## Porting Prompt 5: Benchmarking Zarr vs Parquet
-
-### Purpose
-Teach how to benchmark access patterns, not to win benchmarks.
-
-### Concept Mapping
-- pandas benchmarks → Nx timing + Elixir benchmarking tools
-- Parquet comparison → conceptual discussion if Parquet tooling is absent
-
-### Required Sections
-1. What is being measured
-2. Sequential vs random access
-3. Chunk size effects
-4. Interpretation of results
-
-### Technical Requirements
-- Use synthetic datasets
-- Use repeatable timing methodology
-- Avoid misleading absolute numbers
-
-### Validation Checklist
-- [ ] Benchmarks are reproducible
-- [ ] Limitations clearly stated
-- [ ] Results interpreted cautiously
-
----
-
-## Implementation Notes
-
-### When to Use Each Prompt
-
-1. **Zarr Fundamentals**: Start here for all new Zarr users
-2. **Cloud-Native Geospatial**: For users working with remote data
-3. **Xarray Introduction**: For users coming from scientific Python
-4. **Earthmover Workshop**: For geospatial/datacube workflows
-5. **Benchmarking**: For performance-sensitive applications
-
-### Common Pitfalls
+## Common Pitfalls
 
 - **State Management**: Python notebooks often rely on global state. Elixir requires explicit passing.
 - **Lazy Evaluation**: NumPy is eager, Nx can be lazy. Make evaluation explicit.
 - **Error Handling**: Pattern matching vs try/except requires different pedagogical approach.
 - **Visualization**: Matplotlib is interactive in Jupyter. VegaLite specs are declarative.
-
-### Extension Points
-
-Future notebooks may cover:
-- Zarr v3 sharding
-- Custom codecs
-- Distributed writes
-- Integration with Apache Arrow
-- Time-series specific patterns
 
 ---
 
