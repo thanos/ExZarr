@@ -21,7 +21,7 @@ defmodule ExZarr.Gallery.SampleData do
   """
   @spec rand_floats(pos_integer(), integer()) :: [float()]
   def rand_floats(n, seed \\ 42) when n > 0 do
-    :rand.seed(:exsss, {seed, seed, seed})
+    _ = :rand.seed(:exsss, {seed, seed, seed})
     for _ <- 1..n, do: :rand.uniform()
   end
 

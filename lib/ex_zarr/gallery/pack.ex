@@ -18,7 +18,18 @@ defmodule ExZarr.Gallery.Pack do
           | :float32
           | :float64
 
-  @spec itemsize(dtype()) :: pos_integer()
+  @spec itemsize(
+          :float32
+          | :float64
+          | :int16
+          | :int32
+          | :int64
+          | :int8
+          | :uint16
+          | :uint32
+          | :uint64
+          | :uint8
+        ) :: 1 | 2 | 4 | 8
   def itemsize(:int8), do: 1
   def itemsize(:uint8), do: 1
   def itemsize(:int16), do: 2

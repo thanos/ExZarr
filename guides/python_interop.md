@@ -644,12 +644,16 @@ print(numcodecs.blosc.list_compressors())
 
 **Requires coordination:**
 
-**Zarr v3 advanced features:**
-- **Sharding:** ExZarr supports, zarr-python requires v3.0+ (beta as of 2026)
-- **Dimension names:** ExZarr supports, zarr-python requires v3.0+
-- **Custom chunk grids:** ExZarr supports, zarr-python requires v3.0+
+**Zarr v3 core features:**
+- **Unified codec pipeline:** Full support in ExZarr and zarr-python 3.x
+- **Dimension names:** Full support in ExZarr and zarr-python 3.x
+- **Improved metadata format:** Full support in ExZarr and zarr-python 3.x
 
-**Recommendation:** Use v2 for maximum compatibility until zarr-python 3.0 is stable.
+**Zarr v3 extension features:**
+- **Sharding:** ExZarr supports, requires zarr-python 3.x with sharding extension
+- **Custom chunk grids:** ExZarr supports, requires zarr-python 3.x
+
+**Recommendation:** Use v3 for new projects with modern Python tools (zarr-python 3.x). Use v2 for maximum compatibility with legacy zarr-python 2.x installations.
 
 **Filters:**
 - **Shuffle, Delta:** ExZarr supports, zarr-python requires `numcodecs` package

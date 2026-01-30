@@ -9,7 +9,7 @@
 
 Elixir implementation of [Zarr](https://zarr.dev): compressed, chunked, N-dimensional arrays designed for parallel computing and scientific data storage.
 
-**Full Zarr v3 Support:** ExZarr implements both Zarr v2 and v3 specifications with production-ready support for v3's unified codec pipeline, improved metadata format, and modern features. Automatic version detection ensures seamless interoperability.
+**Full Zarr v3 Support:** ExZarr implements both Zarr v2 and v3 specifications with production-ready support for v3's unified codec pipeline, improved metadata format, and modern features. Automatic version detection ensures seamless interoperability. See [ZARR_V3_STATUS.md](ZARR_V3_STATUS.md) for complete v3 support details.
 
 ## Features
 
