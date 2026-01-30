@@ -1,0 +1,923 @@
+# Untitled notebook
+
+## Welcome to ExZarr
+
+```elixir
+Mix.install([
+  {:ex_zarr, "~> 1.0"},
+  {:nx, "~> 0.7"},
+  {:kino, "~> 0.13"},
+  {:kino_vega_lite, "~> 0.1"}
+])
+```
+
+### Introduction
+
+Welcome to ExZarr! This livebook introduces you to Zarr, a powerful format for storing large multi-dimensional arrays, and ExZarr, its pure Elixir implementation. Whether you're working with satellite imagery, financial time series, machine learning datasets, or scientific simulations, Zarr provides an efficient way to store and access data that's too large for memory.
+
+### What is Zarr?
+
+Zarr is a specification and format for chunked, compressed, N-dimensional arrays. It was designed to solve the fundamental problem of working with datasets that exceed available memory while maintaining fast access to subsets of data.
+
+**The Core Problem:**
+
+Traditional array formats (NumPy `.npy`, MATLAB `.mat`, HDF5 without chunking) require loading entire arrays into memory. If you have a 100 GB dataset but only need to analyze a 1 GB subset, you still need 100 GB of RAM. This becomes impossible for:
+
+* Satellite imagery collections (terabytes of multi-spectral data)
+* ML training datasets (billions of samples)
+* Climate model outputs (decades of hourly global simulations)
+* Financial tick data (years of millisecond-resolution trades)
+
+**Zarr's Innovation: Chunking**
+
+Zarr divides arrays into regular, fixed-size chunks that are stored as separate objects. Each chunk:
+
+* Can be read/written independently
+* Compresses separately (better compression ratios, parallel decompression)
+* Enables selective loading (read only what you need)
+* Supports parallel I/O (multiple processes, no locking)
+* Works seamlessly with cloud storage (S3, GCS, Azure)
+
+Think of it like a large image tiled into smaller pieces. Instead of loading the entire image to view one corner, you load just that tile.
+
+<!-- livebook:{"break_markdown":true} -->
+
+#### Visualizing Chunked Storage
+
+Let's visualize how an array is divided into chunks:
+
+```elixir
+# Create a visual representation of a 4x4 chunk grid
+alias VegaLite, as: Vl
+
+chunks_data =
+  for chunk_y <- 0..3, chunk_x <- 0..3 do
+    %{
+      chunk_id: "Chunk (#{chunk_y},#{chunk_x})",
+      x: chunk_x,
+      y: chunk_y,
+      color: rem(chunk_y + chunk_x, 2)
+    }
+  end
+
+Vl.new(width: 300, height: 300, title: "Zarr Array: Divided into 16 Chunks (4×4 Grid)")
+|> Vl.data_from_values(chunks_data)
+|> Vl.mark(:rect, stroke: "black", stroke_width: 2)
+|> Vl.encode_field(:x, "x", type: :ordinal, title: "Chunk Column", axis: [label_angle: 0])
+|> Vl.encode_field(:y, "y", type: :ordinal, title: "Chunk Row")
+|> Vl.encode_field(:color, "color",
+  type: :nominal,
+  scale: [range: ["#e8f4f8", "#4a90e2"]],
+  legend: false
+)
+|> Vl.encode_field(:tooltip, "chunk_id", type: :nominal)
+```
+
+Each colored rectangle represents an independently stored chunk. When you read data, only the relevant chunks are loaded—not the entire array.
+
+<!-- livebook:{"break_markdown":true} -->
+
+#### Why Zarr Matters
+
+**1. Memory Efficiency:** Process datasets larger than RAM by streaming chunks
+
+**2. Selective Access:** Read only required regions, not entire files
+
+**3. Parallel I/O:** Multiple processes can read/write different chunks simultaneously
+
+**4. Compression:** Each chunk compresses independently with minimal overhead
+
+**5. Cloud-Native:** Chunks map naturally to object storage (S3 objects, GCS blobs)
+
+**6. Interoperability:** Language-agnostic specification—write in Python, read in Elixir (or vice versa)
+
+### What is ExZarr?
+
+ExZarr is a pure Elixir implementation of the Zarr specification. It's not a wrapper around Python's `zarr-python`—it's a ground-up implementation that reads and writes Zarr-compatible arrays natively in Elixir.
+
+**Key Features:**
+
+* **Full Zarr v2 and v3 support:** Both versions fully implemented and production-ready
+* **Nx integration:** Seamless conversion to/from Nx tensors for numerical computing
+* **BEAM concurrency:** Leverages Elixir's lightweight processes for parallel chunk operations
+* **Multiple storage backends:** Memory, filesystem, S3, GCS, Azure Blob Storage
+* **Python interoperability:** Arrays written by `zarr-python` can be read by ExZarr and vice versa
+* **Compression codecs:** Support for gzip, zlib, zstd, lz4, blosc, bzip2
+
+```mermaid
+graph TD
+    A[Your Elixir Application] --> B[ExZarr]
+    B --> C[Zarr Arrays]
+    C --> D[Memory Storage]
+    C --> E[Filesystem]
+    C --> F[S3/GCS/Azure]
+    B --> G[Nx Integration]
+    G --> H[Numerical Computing]
+    B --> I[Python Compatibility]
+    I --> J[zarr-python 2.x / 3.x]
+
+    style B fill:#4a90e2,stroke:#333,stroke-width:2px,color:#fff
+    style C fill:#e8f4f8,stroke:#333,stroke-width:2px
+    style G fill:#90ee90,stroke:#333,stroke-width:2px
+```
+
+### Zarr v2 vs v3: Understanding the Versions
+
+ExZarr supports both Zarr v2 and v3 specifications, with automatic detection when opening existing arrays. Here's what you need to know about each:
+
+#### Zarr v2 (Stable, Widely Supported)
+
+Zarr v2 is the mature, stable version with the broadest ecosystem support.
+
+**Characteristics:**
+
+* **Metadata files:** Separate `.zarray` (array metadata), `.zattrs` (attributes), `.zgroup` (group metadata)
+* **Chunk keys:** Dot-separated paths like `0.1.2` for chunk at position (0, 1, 2)
+* **Codec configuration:** Implicit pipeline with separate `filters` and `compressor` fields
+* **Data types:** NumPy-style strings like `<f8` for little-endian float64
+
+**When to use v2:**
+
+* Maximum compatibility with existing tools
+* Working with Python `zarr-python` 2.x
+* Legacy system integration
+* Broad ecosystem support (Dask, Xarray, Pangeo)
+
+#### Zarr v3 (Modern, Recommended)
+
+Zarr v3 is the modern version with improved design and extensibility. **ExZarr provides full production support for v3.**
+
+**Improvements over v2:**
+
+* **Unified metadata:** Single `zarr.json` file contains array metadata and attributes
+* **Hierarchical chunk keys:** Slash-separated paths like `c/0/1/2` stored in a `c/` directory
+* **Explicit codec pipeline:** User-controlled codec ordering with configuration
+* **Simplified data types:** Human-readable names like `float64` instead of `<f8`
+* **Better extensibility:** Built-in support for extensions and custom features
+* **Dimension names:** First-class support for semantic axis labels
+
+**When to use v3:**
+
+* New projects (recommended default)
+* Modern Python tools (`zarr-python` 3.x)
+* Need explicit codec control
+* Cloud-native workflows
+* Want cleaner metadata structure
+
+#### Version Comparison Table
+
+| Feature             | Zarr v2                               | Zarr v3                         |
+| ------------------- | ------------------------------------- | ------------------------------- |
+| **Metadata Format** | Multiple files (`.zarray`, `.zattrs`) | Single `zarr.json`              |
+| **Chunk Keys**      | Dot-separated (`0.1.2`)               | Hierarchical (`c/0/1/2`)        |
+| **Codecs**          | Implicit pipeline                     | Explicit, configurable pipeline |
+| **Data Types**      | NumPy strings (`<f8`)                 | Readable names (`float64`)      |
+| **Attributes**      | Separate `.zattrs` file               | Embedded in `zarr.json`         |
+| **ExZarr Support**  | Full, production-ready                | Full, production-ready          |
+| **Ecosystem**       | Mature, widely supported              | Modern, growing support         |
+
+**ExZarr's Recommendation:** Use v3 for new projects. Use v2 for compatibility with legacy systems. ExZarr handles both transparently with automatic version detection.
+
+### Why Nx? Understanding Elixir's Numerical Computing Library
+
+Nx (Numerical Elixir) is Elixir's numerical computing library, similar to NumPy in Python. ExZarr integrates deeply with Nx for several compelling reasons:
+
+#### What is Nx?
+
+Nx provides multi-dimensional tensors (arrays) with:
+
+* **Type safety:** Compile-time shape and type checking
+* **Defn compilation:** JIT compilation of numerical functions to CPU/GPU
+* **Backend flexibility:** CPU (BinaryBackend), GPU (EXLA/Torchx), TPU support
+* **Lazy evaluation:** Build computation graphs before execution
+* **Broadcasting:** Automatic shape alignment like NumPy
+
+#### Why ExZarr Uses Nx
+
+**1. Natural Data Model Alignment**
+
+Zarr stores N-dimensional numeric arrays. Nx represents N-dimensional numeric tensors. They're a perfect match:
+
+```elixir
+# Zarr array shape matches Nx tensor shape directly
+zarr_shape = {1000, 1000}   # 2D array
+nx_shape = {1000, 1000}     # 2D tensor
+```
+
+**2. Efficient Binary Transfer**
+
+Nx tensors and Zarr chunks both use binary data. ExZarr can transfer data with zero-copy operations in many cases, avoiding expensive conversions.
+
+**3. Numerical Processing**
+
+Once data is loaded from Zarr into Nx tensors, you can:
+
+* Perform numerical operations (matrix multiplication, element-wise ops)
+* Train machine learning models (Axon, Bumblebee)
+* Run statistical analyses (Scholar)
+* Visualize data (VegaLite, Kino)
+
+**4. Type Compatibility**
+
+Zarr data types map directly to Nx types:
+
+* Zarr `float64` → Nx `{:f, 64}`
+* Zarr `int32` → Nx `{:s, 32}`
+* Zarr `uint8` → Nx `{:u, 8}`
+
+**Example Workflow:**
+
+```
+[Zarr Array on Disk]
+  → ExZarr.Nx.to_tensor()
+  → [Nx Tensor in Memory]
+  → Nx.add() / Nx.dot() / etc.
+  → [Processed Tensor]
+  → ExZarr.Nx.to_zarr()
+  → [Zarr Array on Disk]
+```
+
+Without Nx, you'd work with raw nested tuples or lists—inefficient and error-prone. Nx provides the high-level numerical abstractions that make working with array data practical.
+
+### Understanding Slices: Selective Data Access
+
+**Slicing** is the core operation that makes Zarr practical for large datasets. A slice extracts a rectangular subset of an array without loading the entire array into memory.
+
+#### What is a Slice?
+
+A slice specifies a rectangular region of an array using ranges for each dimension:
+
+```elixir
+# Example: 2D array slicing
+# array shape: {1000, 1000}
+# slice: {100..199, 300..399}
+#
+# This reads:
+# - Rows 100 through 199 (100 rows)
+# - Columns 300 through 399 (100 columns)
+# Result: 100×100 subarray
+```
+
+#### Why Slices Matter
+
+**1. Memory Efficiency**
+
+Without slicing, you load the entire array:
+
+```
+Full load: 1000 × 1000 × 8 bytes = 7.6 MB
+Slice (100×100): 100 × 100 × 8 bytes = 78 KB
+Savings: 99% reduction
+```
+
+**2. I/O Efficiency**
+
+With chunked storage, Zarr reads only chunks that intersect the slice:
+
+```
+Array: 1000×1000, Chunks: 250×250 (16 chunks total)
+Slice: {100..199, 300..399} (100×100 region)
+Chunks accessed: 1 (the chunk containing this region)
+I/O reduction: 93%
+```
+
+**3. Enables Large-Scale Analysis**
+
+You can analyze datasets much larger than RAM by processing one slice at a time:
+
+```elixir
+# Process a 100 GB array with 1 GB RAM by reading 1 GB slices
+for start <- 0..99 do
+  slice = ExZarr.slice(array, {start * 1000..(start + 1) * 1000 - 1, 0..999})
+  # Process this 1 GB chunk
+end
+```
+
+#### Common Slicing Patterns
+
+**Pattern 1: Spatial Subset**
+
+```elixir
+# Satellite image: extract region of interest
+{:ok, city_region} = ExZarr.slice(array, {1000..2000, 3000..4000, 0..2})
+```
+
+**Pattern 2: Time Series**
+
+```elixir
+# Climate data: extract one year from multi-decade dataset
+{:ok, year_2023} = ExZarr.slice(array, {8760..17519, 0..179, 0..359})
+```
+
+**Pattern 3: Single Sample**
+
+```elixir
+# ML dataset: extract one training example
+{:ok, sample_42} = ExZarr.slice(array, {42..42, 0..783})
+```
+
+**Pattern 4: Strided Access**
+
+```elixir
+# Every 10th frame from video data
+{:ok, keyframes} = ExZarr.slice(array, {0..9999//10, 0..1079, 0..1919, 0..2})
+```
+
+Now let's see slicing in action with real code.
+
+### Hands-On: Your First Zarr Array
+
+Let's create a Zarr array and experiment with it. We'll create a 1000×1000 array (1 million elements) divided into chunks of 250×250.
+
+```elixir
+# Create a 2D array with shape 1000×1000, chunked into 250×250 blocks
+# This creates 16 chunks (4×4 grid), each holding 62,500 elements
+
+{:ok, array} =
+  ExZarr.create(
+    shape: {1000, 1000},
+    chunks: {250, 250},
+    dtype: :float64,
+    storage: :memory
+  )
+
+# Inspect the array metadata to understand its structure
+metadata = ExZarr.metadata(array)
+
+IO.puts("Array created successfully!")
+IO.puts("Shape: #{inspect(metadata.shape)}")
+IO.puts("Chunks: #{inspect(metadata.chunks)}")
+IO.puts("Data type: #{metadata.dtype}")
+IO.puts("Compressor: #{inspect(metadata.compressor)}")
+IO.puts("Number of chunks: #{div(1000, 250) * div(1000, 250)}")
+```
+
+The array is now created but empty. Let's populate it with data using Nx.
+
+<!-- livebook:{"break_markdown":true} -->
+
+#### Writing Data with Nx
+
+We'll generate a simple pattern using Nx.iota (which creates sequential integers) and write it to the Zarr array:
+
+```elixir
+# Generate a 1000×1000 tensor with values 0.000 to 0.999
+# Nx.iota creates [0, 1, 2, ...], then we divide to get decimals
+test_data =
+  Nx.iota({1000, 1000}, type: {:f, 64})
+  |> Nx.divide(1000.0)
+
+# Write the Nx tensor to the Zarr array
+# This splits the data into chunks and stores each chunk separately
+:ok = ExZarr.Nx.to_zarr(test_data, array)
+
+IO.puts("Data written successfully!")
+IO.puts("Tensor shape: #{inspect(Nx.shape(test_data))}")
+IO.puts("Sample values (first 5×5):")
+IO.inspect(test_data[0..4, 0..4])
+```
+
+The data is now stored in the Zarr array, divided across 16 chunks. Each chunk is stored independently and can be accessed individually.
+
+<!-- livebook:{"break_markdown":true} -->
+
+#### Reading a Slice
+
+Now let's demonstrate selective access by reading only a small region:
+
+```elixir
+# Read a 100×100 region from the top-left corner
+# This reads rows 0-99 and columns 0-99
+# Because chunks are 250×250, this reads only 1 chunk (not all 16)
+
+{:ok, small_slice} = ExZarr.slice(array, {0..99, 0..99})
+
+IO.puts("Slice shape: #{inspect(Nx.shape(small_slice))}")
+IO.puts("Expected shape: {100, 100}")
+IO.puts("\nFirst 5×5 elements of slice:")
+IO.inspect(small_slice[0..4, 0..4])
+
+# Calculate what percentage of the array we read
+total_elements = 1000 * 1000
+slice_elements = 100 * 100
+percentage = Float.round(slice_elements / total_elements * 100, 2)
+
+IO.puts("\nEfficiency:")
+IO.puts("  Total array elements: #{total_elements}")
+IO.puts("  Elements read: #{slice_elements}")
+IO.puts("  Percentage of array: #{percentage}%")
+IO.puts("  Chunks accessed: 1 out of 16")
+```
+
+This demonstrates the power of chunking: we read 1% of the data by accessing only 6% of the chunks (1 out of 16).
+
+<!-- livebook:{"break_markdown":true} -->
+
+#### Computing Statistics on a Slice
+
+Once data is in an Nx tensor, we can perform numerical operations:
+
+```elixir
+# Compute statistics on the slice we just read
+# These operations happen in memory after loading the slice
+
+mean_val = Nx.mean(small_slice) |> Nx.to_number() |> Float.round(4)
+min_val = Nx.reduce_min(small_slice) |> Nx.to_number() |> Float.round(4)
+max_val = Nx.reduce_max(small_slice) |> Nx.to_number() |> Float.round(4)
+std_val = Nx.standard_deviation(small_slice) |> Nx.to_number() |> Float.round(4)
+
+IO.puts("Statistics for 100×100 slice:")
+IO.puts("  Mean: #{mean_val}")
+IO.puts("  Min: #{min_val}")
+IO.puts("  Max: #{max_val}")
+IO.puts("  Std Dev: #{std_val}")
+```
+
+This workflow—load slice, compute statistics—is the foundation of chunk-based data analysis. You process data in manageable pieces rather than loading everything at once.
+
+### Zarr v2 and v3 in Practice
+
+Let's create arrays in both formats and see the differences:
+
+```elixir
+# Create a Zarr v3 array (recommended for new projects)
+# Note the unified codec pipeline with explicit configuration
+
+{:ok, v3_array} =
+  ExZarr.create(
+    shape: {500, 500},
+    chunks: {100, 100},
+    dtype: :float64,
+    codecs: [
+      %{name: "bytes"},
+      %{name: "gzip", configuration: %{level: 5}}
+    ],
+    zarr_version: 3,
+    storage: :memory
+  )
+
+IO.puts("Zarr v3 array created")
+IO.puts("Metadata format: unified zarr.json")
+IO.puts("Chunk keys: hierarchical (c/0/1)")
+IO.puts("Codec pipeline: explicit and ordered")
+```
+
+```elixir
+# Create a Zarr v2 array for comparison
+# Note the simpler compressor configuration
+
+{:ok, v2_array} =
+  ExZarr.create(
+    shape: {500, 500},
+    chunks: {100, 100},
+    dtype: :float64,
+    compressor: :zlib,
+    zarr_version: 2,
+    storage: :memory
+  )
+
+IO.puts("Zarr v2 array created")
+IO.puts("Metadata format: separate .zarray and .zattrs")
+IO.puts("Chunk keys: dot-separated (0.1)")
+IO.puts("Codec configuration: implicit pipeline")
+```
+
+```elixir
+# Compare metadata structures
+v2_meta = ExZarr.metadata(v2_array)
+v3_meta = ExZarr.metadata(v3_array)
+
+comparison = """
+## Metadata Comparison
+
+### Zarr v2
+- Version: #{v2_meta.zarr_format}
+- Compressor: #{inspect(v2_meta.compressor)}
+- Filters: #{inspect(v2_meta.filters)}
+
+### Zarr v3
+- Version: #{v3_meta.zarr_format}
+- Codecs: #{inspect(v3_meta.codecs)}
+
+**Key Difference:**
+v2 has separate `compressor` and `filters` fields.
+v3 has a unified `codecs` array with explicit ordering.
+
+**Why it matters:**
+v3 gives you explicit control over codec order, enabling optimizations like:
+- Shuffle before compression (better compression ratios)
+- Quantization before shuffle (better compression on floats)
+- Custom codec sequences for specific data types
+"""
+
+Kino.Markdown.new(comparison)
+```
+
+Both formats work identically from the user's perspective. ExZarr handles the differences internally. When opening existing arrays, ExZarr automatically detects the version:
+
+```elixir
+# Automatic version detection example (conceptual)
+version_detection = """
+## Automatic Version Detection
+
+When opening an existing Zarr array, ExZarr inspects the metadata files:
+
+**Zarr v2 Detection:**
+- Looks for `.zarray` file
+- Reads NumPy-style dtype strings
+- Parses dot-separated chunk keys
+
+**Zarr v3 Detection:**
+- Looks for `zarr.json` file
+- Reads node_type field
+- Uses hierarchical chunk keys with `c/` prefix
+
+**Usage:**
+```
+
+{:ok, array} = ExZarr.open(path: "/data/mystery_array")
+IO.puts("Detected version: " <> "#{array.zarr_version}")
+
+## No need to specify version—it's automatic!
+
+```
+
+**Result:**
+You write version-agnostic code. ExZarr handles format differences.
+"""
+
+Kino.Markdown.new(version_detection)
+```
+
+### Common Operations
+
+Let's look at typical operations you'll perform with ExZarr:
+
+<!-- livebook:{"break_markdown":true} -->
+
+#### Reading Different Slice Patterns
+
+```elixir
+# Create test array for slicing demonstrations
+{:ok, demo_array} =
+  ExZarr.create(
+    shape: {100, 100},
+    chunks: {25, 25},
+    dtype: :int32,
+    storage: :memory
+  )
+
+# Fill with sequential values for easy verification
+demo_data = Nx.iota({100, 100}, type: {:s, 32})
+:ok = ExZarr.Nx.to_zarr(demo_data, demo_array)
+
+# Pattern 1: Single row
+{:ok, row_slice} = ExZarr.slice(demo_array, {0..0, 0..99})
+IO.puts("Single row shape: #{inspect(Nx.shape(row_slice))}")
+
+# Pattern 2: Single column
+{:ok, col_slice} = ExZarr.slice(demo_array, {0..99, 0..0})
+IO.puts("Single column shape: #{inspect(Nx.shape(col_slice))}")
+
+# Pattern 3: Square region
+{:ok, square} = ExZarr.slice(demo_array, {10..19, 10..19})
+IO.puts("Square region shape: #{inspect(Nx.shape(square))}")
+
+# Pattern 4: Entire array
+{:ok, full} = ExZarr.Nx.to_tensor(demo_array)
+IO.puts("Full array shape: #{inspect(Nx.shape(full))}")
+```
+
+Each slice type has different chunk access patterns. Understanding which chunks are accessed helps optimize performance.
+
+<!-- livebook:{"break_markdown":true} -->
+
+#### Compression Comparison
+
+Let's see how compression affects storage:
+
+```elixir
+# Create three arrays with different compression settings
+# Using small arrays (100×100) for quick demonstration
+
+# 1. No compression
+{:ok, uncompressed} =
+  ExZarr.create(
+    shape: {100, 100},
+    chunks: {50, 50},
+    dtype: :float64,
+    compressor: nil,
+    storage: :memory
+  )
+
+# 2. Default gzip compression
+{:ok, gzip_compressed} =
+  ExZarr.create(
+    shape: {100, 100},
+    chunks: {50, 50},
+    dtype: :float64,
+    compressor: :zlib,
+    storage: :memory
+  )
+
+# Write the same data to both arrays
+# Using repetitive data (broadcasts compress well)
+repetitive_data = Nx.broadcast(42.0, {100, 100}) |> Nx.as_type({:f, 64})
+
+:ok = ExZarr.Nx.to_zarr(repetitive_data, uncompressed)
+:ok = ExZarr.Nx.to_zarr(repetitive_data, gzip_compressed)
+
+compression_notes = """
+## Compression Trade-offs
+
+**Uncompressed:**
+- Faster writes (no compression overhead)
+- Faster reads (no decompression)
+- Larger storage (8 bytes per element)
+- Best for: frequently accessed data, fast storage
+
+**Compressed (gzip/zlib):**
+- Slower writes (compression overhead)
+- Slower reads (decompression overhead)
+- Smaller storage (varies by data pattern)
+- Best for: infrequently accessed data, slow/expensive storage (S3)
+
+**Compression Ratio Depends on Data:**
+- Repetitive data: 100:1 or better
+- Random data: 1:1 (no compression)
+- Typical scientific data: 2:1 to 10:1
+
+**Our example (all 42.0):** Excellent compression due to repetition
+"""
+
+Kino.Markdown.new(compression_notes)
+```
+
+#### Chunk Size Implications
+
+Chunk size dramatically affects performance. Let's explore:
+
+```elixir
+chunk_analysis = """
+## Choosing Chunk Sizes
+
+**The Chunk Size Dilemma:**
+
+Too small:
+- More metadata overhead
+- More objects to manage
+- Higher latency (many small requests)
+
+Too large:
+- Wasted I/O (reading unused data)
+- Reduced parallelism
+- Memory pressure
+
+**Rules of Thumb:**
+
+1. **Target size:** 10-100 MB per chunk (uncompressed)
+2. **Access patterns:** Match chunk shape to query patterns
+3. **Compression:** Larger chunks = better compression ratios
+4. **Cloud storage:** Larger chunks = fewer API calls (lower cost)
+
+**Example Analysis:**
+
+Dataset: 10000×10000 float64 array (763 MB)
+
+Option A: Chunks 100×100
+- Chunk size: 78 KB each
+- Number of chunks: 10,000
+- Good for: fine-grained random access
+- Bad for: high metadata overhead
+
+Option B: Chunks 1000×1000
+- Chunk size: 7.6 MB each
+- Number of chunks: 100
+- Good for: sequential scans, fewer objects
+- Bad for: wasted I/O on small queries
+
+Option C: Chunks 500×500
+- Chunk size: 1.9 MB each
+- Number of chunks: 400
+- Good for: balanced workloads
+- Sweet spot: moderate object count, reasonable granularity
+
+**Recommendation for this dataset:** 500×500 chunks
+"""
+
+Kino.Markdown.new(chunk_analysis)
+```
+
+### When to Use Zarr (and When Not To)
+
+Understanding when Zarr is the right tool is as important as knowing how to use it.
+
+<!-- livebook:{"break_markdown":true} -->
+
+#### Ideal Use Cases
+
+```elixir
+use_cases = """
+## Zarr Excels At:
+
+### 1. Large Multi-Dimensional Arrays
+- Satellite imagery time series
+- Climate model outputs
+- Medical imaging (CT, MRI scans)
+- Microscopy (large 3D volumes)
+
+**Why:** Chunking enables partial loading and parallel access
+
+### 2. Cloud-Native Workflows
+- Data stored on S3/GCS/Azure
+- Distributed processing (Dask-style)
+- Multi-user concurrent access
+- Serverless analytics
+
+**Why:** Chunks map to object storage naturally
+
+### 3. Selective Access Patterns
+- Reading spatial subsets (bounding boxes)
+- Time series windows (date ranges)
+- Random sampling (training batches)
+- Progressive loading (coarse to fine)
+
+**Why:** Only required chunks are accessed
+
+### 4. Append-Only Datasets
+- Continuous monitoring data
+- Streaming sensor readings
+- Log-structured data
+- Growing time series
+
+**Why:** New chunks can be added without rewriting existing data
+
+### 5. Interoperability Requirements
+- Python ↔ Elixir workflows
+- Multi-language teams
+- Ecosystem integration
+- Future-proof storage
+
+**Why:** Language-agnostic specification
+"""
+
+Kino.Markdown.new(use_cases)
+```
+
+```elixir
+not_for_zarr = """
+## When NOT to Use Zarr:
+
+### 1. Small Datasets (< 100 MB)
+**Better alternatives:** JSON, CSV, ETF (Erlang Term Format)
+**Why:** Zarr's overhead isn't justified
+
+### 2. Row-Oriented Queries
+**Example:** SELECT * FROM users WHERE age > 30
+**Better alternatives:** PostgreSQL, DuckDB, Parquet
+**Why:** Zarr is optimized for array slicing, not SQL filtering
+
+### 3. Frequent Small Updates
+**Example:** Updating individual pixels repeatedly
+**Better alternatives:** Redis, in-memory structures
+**Why:** Chunk-level I/O makes tiny updates inefficient
+
+### 4. Complex Nested Structures
+**Example:** Arbitrary JSON documents
+**Better alternatives:** MongoDB, JSON files
+**Why:** Zarr stores regular N-D arrays, not nested objects
+
+### 5. Transactional Requirements
+**Example:** Bank account balances
+**Better alternatives:** PostgreSQL, CockroachDB
+**Why:** Zarr doesn't support ACID transactions
+
+### 6. Full-Text Search
+**Example:** Document search, log analysis
+**Better alternatives:** Elasticsearch, PostgreSQL with tsvector
+**Why:** Zarr has no text indexing capabilities
+
+### 7. Real-Time Low-Latency (<1ms)
+**Example:** High-frequency trading
+**Better alternatives:** Redis, custom in-memory structures
+**Why:** Chunk I/O and decompression add latency
+"""
+
+Kino.Markdown.new(not_for_zarr)
+```
+
+```mermaid
+graph TD
+    Start[Need to Store Data] --> Q1{Multi-dimensional<br/>numeric arrays?}
+    Q1 -->|No| Alt1[Consider: PostgreSQL,<br/>MongoDB, Parquet]
+    Q1 -->|Yes| Q2{Dataset size?}
+    Q2 -->|< 100 MB| Alt2[Consider: In-memory,<br/>JSON, simple files]
+    Q2 -->|> 1 GB| Q3{Access pattern?}
+    Q3 -->|Full scans| Alt3[Consider: Parquet,<br/>Arrow]
+    Q3 -->|SQL queries| Alt4[Consider: DuckDB,<br/>ClickHouse]
+    Q3 -->|Array slicing| Zarr[Use Zarr/ExZarr!]
+
+    style Zarr fill:#4a90e2,stroke:#333,stroke-width:3px,color:#fff
+    style Alt1 fill:#f8e8e8,stroke:#333,stroke-width:1px
+    style Alt2 fill:#f8e8e8,stroke:#333,stroke-width:1px
+    style Alt3 fill:#f8e8e8,stroke:#333,stroke-width:1px
+    style Alt4 fill:#f8e8e8,stroke:#333,stroke-width:1px
+```
+
+### Why This Matters
+
+Understanding Zarr and ExZarr is increasingly important for modern data engineering:
+
+**1. The Data Scale Problem is Real**
+
+Datasets are growing exponentially:
+
+* Earth observation: Petabytes of daily satellite data
+* ML training: Billion-parameter models, billion-sample datasets
+* Scientific simulations: Exabyte-scale climate projections
+* IoT sensors: Trillions of time-stamped measurements
+
+Traditional formats can't handle this scale. Chunked formats like Zarr are becoming the standard.
+
+**2. The BEAM is Uniquely Suited**
+
+Elixir's concurrency model makes it ideal for Zarr:
+
+* **No GIL:** True parallel chunk processing (unlike Python)
+* **Fault tolerance:** Supervisor trees handle failures gracefully
+* **Streaming:** Process infinite data with bounded memory
+* **Distribution:** Naturally scales across nodes
+
+ExZarr isn't just "Zarr in Elixir"—it's Zarr reimagined for concurrent, distributed systems.
+
+**3. Cloud-Native is the Future**
+
+Data lives in object storage (S3, GCS, Azure). Zarr's chunk-based design:
+
+* Minimizes data transfer (read only what you need)
+* Reduces API calls (fewer LIST operations)
+* Enables serverless analytics (Lambda, Cloud Functions)
+* Scales horizontally (add more processes, not bigger machines)
+
+**4. Interoperability Unlocks Ecosystems**
+
+With Zarr:
+
+* Python data scientists prepare datasets
+* Elixir systems serve them in production
+* Julia researchers analyze them
+* R users visualize them
+
+All reading the same arrays without conversion or duplication.
+
+### Next Steps
+
+You've learned the fundamentals of Zarr and ExZarr. Here's where to go next:
+
+**Core Concepts:**
+
+* **01.01 First Zarr Array:** Hands-on array creation and manipulation
+* **01.02 Metadata and Chunks:** Deep dive into `.zarray` and chunk mechanics
+* **01.03 Chunk Streaming:** Sequential vs parallel chunk access
+
+**Foundations:**
+
+* **Zarr Fundamentals:** Comprehensive tutorial with exercises on chunk sizing
+* **Xarray Zarr Intro:** Groups, attributes, and multi-array datasets
+* **Earthmover Datacube:** 4D arrays and chunk-based computation strategies
+
+**Performance:**
+
+* **Benchmarking Zarr:** Understand access patterns and optimize for your workload
+* **02.01 Parallel Reads:** Leverage BEAM concurrency for faster I/O
+
+**Applications:**
+
+* **AI/GenAI:** Embedding storage, RAG datasets, LLM evaluation tracking
+* **Finance:** Tick data cubes, order books, risk analytics
+* **Geospatial:** Climate datasets, satellite imagery, CMIP-style analysis
+
+### Summary
+
+**What You Learned:**
+
+1. **Zarr** is a chunked, compressed array format for datasets too large for memory
+2. **ExZarr** is a pure Elixir implementation with full v2 and v3 support
+3. **Chunks** enable selective loading, parallelism, and cloud-native workflows
+4. **Zarr v2** is mature and widely supported; **v3** is modern and recommended
+5. **Nx** provides the numerical computing layer for array operations
+6. **Slices** are the key to efficient large-array processing
+7. **Zarr excels** at multi-dimensional numeric arrays with selective access
+8. **Zarr is not** a database, search engine, or transaction system
+
+**Key Insight:**
+
+Zarr solves the "array too large for memory" problem by making chunks the fundamental unit of I/O. Combined with Elixir's BEAM concurrency, ExZarr enables building robust, scalable, concurrent systems for array data.
+
+**Remember:**
+
+If your data is multi-dimensional, numeric, too large for memory, and requires selective access—Zarr and ExZarr are excellent choices.
+
+For other use cases, refer to the "When NOT to Use Zarr" section for appropriate alternatives.
+
+Happy chunking!
