@@ -120,7 +120,10 @@ defmodule Mix.Tasks.FixNifRpaths do
 
         if failed > 0 do
           Mix.shell().info("")
-          Mix.shell().info("WARNING:  Some rpaths could not be added due to Mach-O header size limits.")
+
+          Mix.shell().info(
+            "WARNING:  Some rpaths could not be added due to Mach-O header size limits."
+          )
 
           Mix.shell().info(
             "   To use all compression codecs, set the library path before running:"
