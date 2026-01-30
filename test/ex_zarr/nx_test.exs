@@ -92,12 +92,13 @@ defmodule ExZarr.NxTest do
 
     describe "to_tensor/2 - basic conversion" do
       test "converts 1D float64 array to tensor" do
-        {:ok, array} = ExZarr.create(
-          shape: {100},
-          chunks: {50},
-          dtype: :float64,
-          storage: :memory
-        )
+        {:ok, array} =
+          ExZarr.create(
+            shape: {100},
+            chunks: {50},
+            dtype: :float64,
+            storage: :memory
+          )
 
         # Fill with test data
         data = for i <- 0..99, into: <<>>, do: <<i * 1.0::float-64-native>>
@@ -111,12 +112,13 @@ defmodule ExZarr.NxTest do
       end
 
       test "converts 2D int32 array to tensor" do
-        {:ok, array} = ExZarr.create(
-          shape: {10, 10},
-          chunks: {5, 5},
-          dtype: :int32,
-          storage: :memory
-        )
+        {:ok, array} =
+          ExZarr.create(
+            shape: {10, 10},
+            chunks: {5, 5},
+            dtype: :int32,
+            storage: :memory
+          )
 
         # Fill with test data
         data = for i <- 0..99, into: <<>>, do: <<i::32-native>>
@@ -128,12 +130,13 @@ defmodule ExZarr.NxTest do
       end
 
       test "converts 3D uint8 array to tensor" do
-        {:ok, array} = ExZarr.create(
-          shape: {4, 5, 6},
-          chunks: {2, 5, 3},
-          dtype: :uint8,
-          storage: :memory
-        )
+        {:ok, array} =
+          ExZarr.create(
+            shape: {4, 5, 6},
+            chunks: {2, 5, 3},
+            dtype: :uint8,
+            storage: :memory
+          )
 
         # Fill with test data
         data = for i <- 0..119, into: <<>>, do: <<i::8>>
@@ -145,12 +148,13 @@ defmodule ExZarr.NxTest do
       end
 
       test "converts float32 array to tensor" do
-        {:ok, array} = ExZarr.create(
-          shape: {50},
-          chunks: {25},
-          dtype: :float32,
-          storage: :memory
-        )
+        {:ok, array} =
+          ExZarr.create(
+            shape: {50},
+            chunks: {25},
+            dtype: :float32,
+            storage: :memory
+          )
 
         data = for i <- 0..49, into: <<>>, do: <<i * 2.5::float-32-native>>
         :ok = ExZarr.Array.set_slice(array, data, start: {0}, stop: {50})
@@ -163,12 +167,13 @@ defmodule ExZarr.NxTest do
 
     describe "to_tensor/2 - with options" do
       test "converts tensor with axis names" do
-        {:ok, array} = ExZarr.create(
-          shape: {10, 20},
-          chunks: {5, 10},
-          dtype: :float64,
-          storage: :memory
-        )
+        {:ok, array} =
+          ExZarr.create(
+            shape: {10, 20},
+            chunks: {5, 10},
+            dtype: :float64,
+            storage: :memory
+          )
 
         {:ok, tensor} = ExZarrNx.to_tensor(array, names: [:rows, :cols])
         assert Nx.shape(tensor) == {10, 20}
@@ -176,12 +181,13 @@ defmodule ExZarr.NxTest do
       end
 
       test "converts tensor with backend transfer" do
-        {:ok, array} = ExZarr.create(
-          shape: {10, 10},
-          chunks: {5, 5},
-          dtype: :float64,
-          storage: :memory
-        )
+        {:ok, array} =
+          ExZarr.create(
+            shape: {10, 10},
+            chunks: {5, 5},
+            dtype: :float64,
+            storage: :memory
+          )
 
         # Transfer to BinaryBackend (default backend)
         {:ok, tensor} = ExZarrNx.to_tensor(array, backend: Nx.BinaryBackend)
@@ -193,10 +199,11 @@ defmodule ExZarr.NxTest do
       test "converts 1D tensor to array" do
         tensor = Nx.iota({100}, type: {:f, 64})
 
-        {:ok, array} = ExZarrNx.from_tensor(tensor,
-          chunks: {50},
-          storage: :memory
-        )
+        {:ok, array} =
+          ExZarrNx.from_tensor(tensor,
+            chunks: {50},
+            storage: :memory
+          )
 
         assert array.metadata.shape == {100}
         assert array.metadata.dtype == :float64
@@ -210,10 +217,11 @@ defmodule ExZarr.NxTest do
       test "converts 2D tensor to array" do
         tensor = Nx.iota({10, 20}, type: {:s, 32})
 
-        {:ok, array} = ExZarrNx.from_tensor(tensor,
-          chunks: {5, 10},
-          storage: :memory
-        )
+        {:ok, array} =
+          ExZarrNx.from_tensor(tensor,
+            chunks: {5, 10},
+            storage: :memory
+          )
 
         assert array.metadata.shape == {10, 20}
         assert array.metadata.dtype == :int32
@@ -223,10 +231,11 @@ defmodule ExZarr.NxTest do
       test "converts 3D tensor to array" do
         tensor = Nx.iota({4, 5, 6}, type: {:u, 8})
 
-        {:ok, array} = ExZarrNx.from_tensor(tensor,
-          chunks: {2, 5, 3},
-          storage: :memory
-        )
+        {:ok, array} =
+          ExZarrNx.from_tensor(tensor,
+            chunks: {2, 5, 3},
+            storage: :memory
+          )
 
         assert array.metadata.shape == {4, 5, 6}
         assert array.metadata.dtype == :uint8
@@ -236,11 +245,12 @@ defmodule ExZarr.NxTest do
       test "converts tensor with custom fill value" do
         tensor = Nx.iota({100}, type: {:f, 32})
 
-        {:ok, array} = ExZarrNx.from_tensor(tensor,
-          chunks: {50},
-          storage: :memory,
-          fill_value: -1.0
-        )
+        {:ok, array} =
+          ExZarrNx.from_tensor(tensor,
+            chunks: {50},
+            storage: :memory,
+            fill_value: -1.0
+          )
 
         assert array.metadata.fill_value == -1.0
       end
@@ -248,11 +258,12 @@ defmodule ExZarr.NxTest do
       test "converts tensor with zarr version 3" do
         tensor = Nx.iota({100}, type: {:f, 64})
 
-        {:ok, array} = ExZarrNx.from_tensor(tensor,
-          chunks: {50},
-          storage: :memory,
-          zarr_version: 3
-        )
+        {:ok, array} =
+          ExZarrNx.from_tensor(tensor,
+            chunks: {50},
+            storage: :memory,
+            zarr_version: 3
+          )
 
         assert array.metadata.zarr_format == 3
       end
@@ -265,17 +276,21 @@ defmodule ExZarr.NxTest do
       end
 
       test "int16 round-trip" do
-        tensor = Nx.tensor([-32768, -1, 0, 1, 32767], type: {:s, 16})
+        tensor = Nx.tensor([-32_768, -1, 0, 1, 32_767], type: {:s, 16})
         assert_round_trip(tensor)
       end
 
       test "int32 round-trip" do
-        tensor = Nx.tensor([-2147483648, -1, 0, 1, 2147483647], type: {:s, 32})
+        tensor = Nx.tensor([-2_147_483_648, -1, 0, 1, 2_147_483_647], type: {:s, 32})
         assert_round_trip(tensor)
       end
 
       test "int64 round-trip" do
-        tensor = Nx.tensor([-9223372036854775808, -1, 0, 1, 9223372036854775807], type: {:s, 64})
+        tensor =
+          Nx.tensor([-9_223_372_036_854_775_808, -1, 0, 1, 9_223_372_036_854_775_807],
+            type: {:s, 64}
+          )
+
         assert_round_trip(tensor)
       end
 
@@ -285,17 +300,17 @@ defmodule ExZarr.NxTest do
       end
 
       test "uint16 round-trip" do
-        tensor = Nx.tensor([0, 1, 32767, 65535], type: {:u, 16})
+        tensor = Nx.tensor([0, 1, 32_767, 65_535], type: {:u, 16})
         assert_round_trip(tensor)
       end
 
       test "uint32 round-trip" do
-        tensor = Nx.tensor([0, 1, 2147483647, 4294967295], type: {:u, 32})
+        tensor = Nx.tensor([0, 1, 2_147_483_647, 4_294_967_295], type: {:u, 32})
         assert_round_trip(tensor)
       end
 
       test "uint64 round-trip" do
-        tensor = Nx.tensor([0, 1, 9223372036854775807], type: {:u, 64})
+        tensor = Nx.tensor([0, 1, 9_223_372_036_854_775_807], type: {:u, 64})
         assert_round_trip(tensor)
       end
 
@@ -340,12 +355,13 @@ defmodule ExZarr.NxTest do
     describe "to_tensor_chunked/3" do
       test "streams array in chunks" do
         # Create 200x200 array
-        {:ok, array} = ExZarr.create(
-          shape: {200, 200},
-          chunks: {50, 50},
-          dtype: :float64,
-          storage: :memory
-        )
+        {:ok, array} =
+          ExZarr.create(
+            shape: {200, 200},
+            chunks: {50, 50},
+            dtype: :float64,
+            storage: :memory
+          )
 
         # Fill with data
         tensor = Nx.iota({200, 200}, type: {:f, 64})
@@ -353,9 +369,10 @@ defmodule ExZarr.NxTest do
         :ok = ExZarr.Array.set_slice(array, binary, start: {0, 0}, stop: {200, 200})
 
         # Process in 100x100 chunks
-        chunks = array
-        |> ExZarrNx.to_tensor_chunked({100, 100})
-        |> Enum.to_list()
+        chunks =
+          array
+          |> ExZarrNx.to_tensor_chunked({100, 100})
+          |> Enum.to_list()
 
         # Should have 4 chunks (2x2 grid)
         assert length(chunks) == 4
@@ -371,17 +388,19 @@ defmodule ExZarr.NxTest do
 
       test "streams array with uneven chunks" do
         # Create 150x150 array
-        {:ok, array} = ExZarr.create(
-          shape: {150, 150},
-          chunks: {50, 50},
-          dtype: :int32,
-          storage: :memory
-        )
+        {:ok, array} =
+          ExZarr.create(
+            shape: {150, 150},
+            chunks: {50, 50},
+            dtype: :int32,
+            storage: :memory
+          )
 
         # Process in 100x100 chunks (last chunks will be smaller)
-        chunks = array
-        |> ExZarrNx.to_tensor_chunked({100, 100})
-        |> Enum.to_list()
+        chunks =
+          array
+          |> ExZarrNx.to_tensor_chunked({100, 100})
+          |> Enum.to_list()
 
         # Should have 4 chunks
         assert length(chunks) == 4
@@ -391,28 +410,34 @@ defmodule ExZarr.NxTest do
         assert Nx.shape(chunk1) == {100, 100}
 
         assert {:ok, chunk2} = Enum.at(chunks, 1)
-        assert Nx.shape(chunk2) == {100, 50}  # Last column chunk is smaller
+        # Last column chunk is smaller
+        assert Nx.shape(chunk2) == {100, 50}
 
         assert {:ok, chunk3} = Enum.at(chunks, 2)
-        assert Nx.shape(chunk3) == {50, 100}  # Last row chunk is smaller
+        # Last row chunk is smaller
+        assert Nx.shape(chunk3) == {50, 100}
 
         assert {:ok, chunk4} = Enum.at(chunks, 3)
-        assert Nx.shape(chunk4) == {50, 50}   # Corner chunk is smaller
+        # Corner chunk is smaller
+        assert Nx.shape(chunk4) == {50, 50}
       end
 
       test "streams 1D array in chunks" do
-        {:ok, array} = ExZarr.create(
-          shape: {1000},
-          chunks: {100},
-          dtype: :float64,
-          storage: :memory
-        )
+        {:ok, array} =
+          ExZarr.create(
+            shape: {1000},
+            chunks: {100},
+            dtype: :float64,
+            storage: :memory
+          )
 
-        chunks = array
-        |> ExZarrNx.to_tensor_chunked({250})
-        |> Enum.to_list()
+        chunks =
+          array
+          |> ExZarrNx.to_tensor_chunked({250})
+          |> Enum.to_list()
 
         assert length(chunks) == 4
+
         Enum.each(chunks, fn {:ok, chunk} ->
           assert Nx.type(chunk) == {:f, 64}
           assert Nx.shape(chunk) == {250}
@@ -420,12 +445,13 @@ defmodule ExZarr.NxTest do
       end
 
       test "processes chunks with Stream operations" do
-        {:ok, array} = ExZarr.create(
-          shape: {100, 100},
-          chunks: {50, 50},
-          dtype: :float64,
-          storage: :memory
-        )
+        {:ok, array} =
+          ExZarr.create(
+            shape: {100, 100},
+            chunks: {50, 50},
+            dtype: :float64,
+            storage: :memory
+          )
 
         # Fill with sequential data
         tensor = Nx.iota({100, 100}, type: {:f, 64})
@@ -433,14 +459,16 @@ defmodule ExZarr.NxTest do
         :ok = ExZarr.Array.set_slice(array, binary, start: {0, 0}, stop: {100, 100})
 
         # Calculate mean of each chunk
-        means = array
-        |> ExZarrNx.to_tensor_chunked({50, 50})
-        |> Stream.map(fn {:ok, chunk} ->
-          Nx.mean(chunk) |> Nx.to_number()
-        end)
-        |> Enum.to_list()
+        means =
+          array
+          |> ExZarrNx.to_tensor_chunked({50, 50})
+          |> Stream.map(fn {:ok, chunk} ->
+            Nx.mean(chunk) |> Nx.to_number()
+          end)
+          |> Enum.to_list()
 
         assert length(means) == 4
+
         Enum.each(means, fn mean ->
           assert is_float(mean)
           assert mean >= 0.0
@@ -467,10 +495,11 @@ defmodule ExZarr.NxTest do
         tensor = Nx.iota({100})
 
         # filesystem storage requires path
-        result = ExZarrNx.from_tensor(tensor,
-          chunks: {50},
-          storage: :filesystem
-        )
+        result =
+          ExZarrNx.from_tensor(tensor,
+            chunks: {50},
+            storage: :filesystem
+          )
 
         # This will fail during array creation, not in from_tensor itself
         assert {:error, _} = result
@@ -481,11 +510,12 @@ defmodule ExZarr.NxTest do
       test "round-trip with zlib compression" do
         tensor = Nx.iota({100, 100}, type: {:f, 64})
 
-        {:ok, array} = ExZarrNx.from_tensor(tensor,
-          chunks: {50, 50},
-          storage: :memory,
-          compressor: :zlib
-        )
+        {:ok, array} =
+          ExZarrNx.from_tensor(tensor,
+            chunks: {50, 50},
+            storage: :memory,
+            compressor: :zlib
+          )
 
         {:ok, restored} = ExZarrNx.to_tensor(array)
         assert Nx.all(Nx.equal(tensor, restored)) |> Nx.to_number() == 1
@@ -494,11 +524,12 @@ defmodule ExZarr.NxTest do
       test "round-trip with zstd compression" do
         tensor = Nx.iota({100, 100}, type: {:s, 32})
 
-        {:ok, array} = ExZarrNx.from_tensor(tensor,
-          chunks: {50, 50},
-          storage: :memory,
-          compressor: :zstd
-        )
+        {:ok, array} =
+          ExZarrNx.from_tensor(tensor,
+            chunks: {50, 50},
+            storage: :memory,
+            compressor: :zstd
+          )
 
         {:ok, restored} = ExZarrNx.to_tensor(array)
         assert Nx.all(Nx.equal(tensor, restored)) |> Nx.to_number() == 1
@@ -507,11 +538,12 @@ defmodule ExZarr.NxTest do
       test "round-trip with no compression" do
         tensor = Nx.iota({100, 100}, type: {:u, 16})
 
-        {:ok, array} = ExZarrNx.from_tensor(tensor,
-          chunks: {50, 50},
-          storage: :memory,
-          compressor: :none
-        )
+        {:ok, array} =
+          ExZarrNx.from_tensor(tensor,
+            chunks: {50, 50},
+            storage: :memory,
+            compressor: :none
+          )
 
         {:ok, restored} = ExZarrNx.to_tensor(array)
         assert Nx.all(Nx.equal(tensor, restored)) |> Nx.to_number() == 1
@@ -525,37 +557,42 @@ defmodule ExZarr.NxTest do
         tensor = Nx.iota({1000, 1000}, type: {:f, 64})
 
         # Measure conversion time
-        {time_from, {:ok, array}} = :timer.tc(fn ->
-          ExZarrNx.from_tensor(tensor,
-            chunks: {100, 100},
-            storage: :memory
-          )
-        end)
+        {time_from, {:ok, array}} =
+          :timer.tc(fn ->
+            ExZarrNx.from_tensor(tensor,
+              chunks: {100, 100},
+              storage: :memory
+            )
+          end)
 
-        {time_to, {:ok, _restored}} = :timer.tc(fn ->
-          ExZarrNx.to_tensor(array)
-        end)
+        {time_to, {:ok, _restored}} =
+          :timer.tc(fn ->
+            ExZarrNx.to_tensor(array)
+          end)
 
         # Should complete in reasonable time (< 1s each direction)
         # Note: Performance varies based on system load and compression
-        assert time_from < 1_000_000  # microseconds (1 second)
+        # microseconds (1 second)
+        assert time_from < 1_000_000
         assert time_to < 1_000_000
       end
 
       @tag :performance
       test "chunked processing uses constant memory" do
         # Create large array
-        {:ok, array} = ExZarr.create(
-          shape: {1000, 1000},
-          chunks: {100, 100},
-          dtype: :float64,
-          storage: :memory
-        )
+        {:ok, array} =
+          ExZarr.create(
+            shape: {1000, 1000},
+            chunks: {100, 100},
+            dtype: :float64,
+            storage: :memory
+          )
 
         # Process in chunks - should not load entire array
-        chunk_count = array
-        |> ExZarrNx.to_tensor_chunked({200, 200})
-        |> Enum.count()
+        chunk_count =
+          array
+          |> ExZarrNx.to_tensor_chunked({200, 200})
+          |> Enum.count()
 
         # Should have 25 chunks (5x5 grid)
         assert chunk_count == 25
@@ -565,10 +602,11 @@ defmodule ExZarr.NxTest do
     # Helper functions
 
     defp assert_round_trip(tensor) do
-      {:ok, array} = ExZarrNx.from_tensor(tensor,
-        chunks: infer_chunks(Nx.shape(tensor)),
-        storage: :memory
-      )
+      {:ok, array} =
+        ExZarrNx.from_tensor(tensor,
+          chunks: infer_chunks(Nx.shape(tensor)),
+          storage: :memory
+        )
 
       {:ok, restored} = ExZarrNx.to_tensor(array)
 
@@ -578,10 +616,11 @@ defmodule ExZarr.NxTest do
     end
 
     defp assert_round_trip_float(tensor, tolerance) do
-      {:ok, array} = ExZarrNx.from_tensor(tensor,
-        chunks: infer_chunks(Nx.shape(tensor)),
-        storage: :memory
-      )
+      {:ok, array} =
+        ExZarrNx.from_tensor(tensor,
+          chunks: infer_chunks(Nx.shape(tensor)),
+          storage: :memory
+        )
 
       {:ok, restored} = ExZarrNx.to_tensor(array)
 

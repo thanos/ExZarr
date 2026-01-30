@@ -2,7 +2,7 @@
 
 This guide shows how to integrate ExZarr with Nx (Numerical Elixir) for numerical computing and machine learning workflows. ExZarr provides persistent storage for Nx tensors, enabling workflows that exceed available memory.
 
-**⚡ Performance Note:** ExZarr provides an optimized `ExZarr.Nx` module with **5-10x faster** conversion compared to manual approaches. Always use `ExZarr.Nx` for best performance.
+** Performance Note:** ExZarr provides an optimized `ExZarr.Nx` module with **5-10x faster** conversion compared to manual approaches. Always use `ExZarr.Nx` for best performance.
 
 ## Table of Contents
 
@@ -94,8 +94,8 @@ ExZarr provides the `ExZarr.Nx` module for efficient conversion using direct bin
 
 | Approach | Time (8MB) | Throughput | Status |
 |----------|-----------|------------|---------|
-| **`ExZarr.Nx` (optimized)** | **10-20ms** | **400-800 MB/s** | ✅ **Recommended** |
-| Nested tuples (legacy) | 80-150ms | 50-100 MB/s | ⚠️ Deprecated |
+| **`ExZarr.Nx` (optimized)** | **10-20ms** | **400-800 MB/s** | **Recommended** |
+| Nested tuples (legacy) | 80-150ms | 50-100 MB/s | Deprecated |
 
 **Speedup: 5-10x faster**
 
@@ -168,7 +168,7 @@ original = Nx.iota({500, 500}, type: {:f, 32})
 
 # Verify round-trip
 if Nx.all(Nx.equal(original, restored)) |> Nx.to_number() == 1 do
-  IO.puts("✅ Round-trip successful!")
+  IO.puts("Round-trip successful!")
 end
 ```
 
@@ -180,16 +180,16 @@ All 10 standard numeric types are fully supported:
 
 | Nx Type | ExZarr Dtype | Bytes | Compatible | Notes |
 |---------|--------------|-------|------------|-------|
-| `{:s, 8}` | `:int8` | 1 | ✅ Yes | 8-bit signed integer |
-| `{:s, 16}` | `:int16` | 2 | ✅ Yes | 16-bit signed integer |
-| `{:s, 32}` | `:int32` | 4 | ✅ Yes | 32-bit signed integer |
-| `{:s, 64}` | `:int64` | 8 | ✅ Yes | 64-bit signed integer |
-| `{:u, 8}` | `:uint8` | 1 | ✅ Yes | 8-bit unsigned integer |
-| `{:u, 16}` | `:uint16` | 2 | ✅ Yes | 16-bit unsigned integer |
-| `{:u, 32}` | `:uint32` | 4 | ✅ Yes | 32-bit unsigned integer |
-| `{:u, 64}` | `:uint64` | 8 | ✅ Yes | 64-bit unsigned integer |
-| `{:f, 32}` | `:float32` | 4 | ✅ Yes | 32-bit IEEE 754 float |
-| `{:f, 64}` | `:float64` | 8 | ✅ Yes | 64-bit IEEE 754 float |
+| `{:s, 8}` | `:int8` | 1 | Yes | 8-bit signed integer |
+| `{:s, 16}` | `:int16` | 2 | Yes | 16-bit signed integer |
+| `{:s, 32}` | `:int32` | 4 | Yes | 32-bit signed integer |
+| `{:s, 64}` | `:int64` | 8 | Yes | 64-bit signed integer |
+| `{:u, 8}` | `:uint8` | 1 | Yes | 8-bit unsigned integer |
+| `{:u, 16}` | `:uint16` | 2 | Yes | 16-bit unsigned integer |
+| `{:u, 32}` | `:uint32` | 4 | Yes | 32-bit unsigned integer |
+| `{:u, 64}` | `:uint64` | 8 | Yes | 64-bit unsigned integer |
+| `{:f, 32}` | `:float32` | 4 | Yes | 32-bit IEEE 754 float |
+| `{:f, 64}` | `:float64` | 8 | Yes | 64-bit IEEE 754 float |
 
 ### Unsupported Types
 
@@ -435,7 +435,7 @@ IO.puts("Training complete!")
 # Training batch size: 32 samples
 # Features: 784 dimensions
 
-# ✅ Good: Chunks aligned with batches
+# Good: Chunks aligned with batches
 {:ok, array} = ExZarr.create(
   shape: {10000, 784},
   chunks: {32, 784},      # Each chunk = exactly 1 batch
@@ -913,13 +913,13 @@ tensor = data
 
 ExZarr provides first-class Nx integration via the `ExZarr.Nx` module:
 
-✅ **5-10x faster** than manual conversion (400-800 MB/s vs 50-100 MB/s)
-✅ **Simple API** - Single function calls for conversion
-✅ **Full type support** - All 10 standard numeric types
-✅ **Chunked processing** - Constant memory for large arrays
-✅ **Backend agnostic** - Works with CPU, EXLA, Torchx
-✅ **ML-ready** - Efficient batch loading, checkpointing
-✅ **Production-tested** - Used in real-world workflows
+**5-10x faster** than manual conversion (400-800 MB/s vs 50-100 MB/s)
+**Simple API** - Single function calls for conversion
+**Full type support** - All 10 standard numeric types
+**Chunked processing** - Constant memory for large arrays
+**Backend agnostic** - Works with CPU, EXLA, Torchx
+**ML-ready** - Efficient batch loading, checkpointing
+**Production-tested** - Used in real-world workflows
 
 **Next steps:**
 - Try the example: `elixir examples/nx_optimized_conversion.exs`
