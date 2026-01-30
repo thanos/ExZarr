@@ -706,21 +706,21 @@ These tests verify that:
 
 Comprehensive guides for all skill levels:
 
-- **[Getting Started](guides/getting_started.md)** - New to ExZarr? Start here!
+- **[Getting Started](guides/quickstart.md)** - New to ExZarr? Start here!
   - Installation and basic concepts
   - Creating and opening arrays
   - Reading and writing data
   - Choosing chunk sizes
   - Common patterns and best practices
 
-- **[Advanced Usage](guides/advanced_usage.md)** - Deep dive into advanced features
+- **[Advanced Usage](guides/performance.md)** - Deep dive into advanced features
   - Zarr v3 features (sharding, dimension names, codec pipeline)
   - Custom chunk grids (regular and irregular)
   - Cloud storage optimization (S3, GCS, Azure)
   - Performance tuning and profiling
   - Custom storage backends and codecs
 
-- **[Migration from Python](guides/migration_from_python.md)** - For zarr-python users
+- **[Migration from Python](guides/python_interop.md)** - For zarr-python users
   - API comparison and translation guide
   - Data structure differences (NumPy arrays vs nested tuples)
   - Converting between Python and Elixir

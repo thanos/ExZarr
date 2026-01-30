@@ -83,6 +83,9 @@ defmodule ExZarr.MixProject do
       # Observability
       {:telemetry, "~> 1.2"},
 
+      # Numerical computing (optional)
+      {:nx, "~> 0.7", optional: true},
+
       # Documentation
       {:ex_doc, "~> 0.31", only: :dev, runtime: false}
     ] ++
@@ -124,29 +127,109 @@ defmodule ExZarr.MixProject do
     [
       main: "ExZarr",
       extras: [
+        # Getting Started
         "README.md",
+        "guides/quickstart.md",
+
+        # Core Concepts
+        "guides/core_concepts.md",
+        "guides/parallel_io.md",
+
+        # Storage and Backends
+        "guides/storage_providers.md",
+        "guides/custom_storage_backend.md",
+
+        # Compression and Data Processing
+        "guides/compression_codecs.md",
+        "guides/python_interop.md",
+
+        # Advanced Topics
+        "guides/performance.md",
+        "guides/nx_integration.md",
+
+        # Reference
+        "guides/troubleshooting.md",
+        "guides/glossary.md",
+
+        # Contributing
+        "guides/contributing.md",
+
+        # Additional Documentation
         "CHANGELOG.md",
         "INTEROPERABILITY.md",
         "PERFORMANCE_IMPROVEMENTS.md",
         "SECURITY.md",
         "docs/V2_TO_V3_MIGRATION.md",
-        "guides/getting_started.md",
-        "guides/advanced_usage.md",
-        "guides/migration_from_python.md",
-        "guides/performance.md",
-        "guides/telemetry.md",
-        "guides/error_handling.md",
         "benchmarks/README.md"
       ],
       groups_for_extras: [
-        Guides: ~r/guides\//,
-        Performance: ~r/PERFORMANCE_IMPROVEMENTS|benchmarks/,
-        Security: ~r/SECURITY/,
-        "Release Notes": ~r/CHANGELOG/
+        "Getting Started": [
+          "README.md",
+          "guides/quickstart.md"
+        ],
+        "Core Concepts": [
+          "guides/core_concepts.md",
+          "guides/parallel_io.md"
+        ],
+        "Storage and Backends": [
+          "guides/storage_providers.md",
+          "guides/custom_storage_backend.md"
+        ],
+        "Compression and Data Processing": [
+          "guides/compression_codecs.md",
+          "guides/python_interop.md"
+        ],
+        "Advanced Topics": [
+          "guides/performance.md",
+          "guides/nx_integration.md"
+        ],
+        Reference: [
+          "guides/troubleshooting.md",
+          "guides/glossary.md"
+        ],
+        Contributing: [
+          "guides/contributing.md"
+        ],
+        "Additional Documentation": [
+          "CHANGELOG.md",
+          "INTEROPERABILITY.md",
+          "PERFORMANCE_IMPROVEMENTS.md",
+          "SECURITY.md",
+          "docs/V2_TO_V3_MIGRATION.md",
+          "benchmarks/README.md"
+        ]
       ],
       source_ref: "v#{@version}",
       source_url: @source_url,
-      authors: ["Thanos Vassilakis"]
+      authors: ["Thanos Vassilakis"],
+      logo: nil,
+      api_reference: true,
+      formatters: ["html"],
+      before_closing_body_tag: &before_closing_body_tag/1
     ]
   end
+
+  # Add search and navigation enhancements
+  defp before_closing_body_tag(:html) do
+    """
+    <script>
+      // Add keyboard shortcuts for documentation navigation
+      document.addEventListener('keydown', function(e) {
+        // Press 'g' then 'h' to go to guides home
+        if (e.key === 'g') {
+          setTimeout(function() {
+            document.addEventListener('keydown', function handler(e2) {
+              if (e2.key === 'h') {
+                window.location.href = 'readme.html';
+              }
+              document.removeEventListener('keydown', handler);
+            }, {once: true});
+          }, 100);
+        }
+      });
+    </script>
+    """
+  end
+
+  defp before_closing_body_tag(_), do: ""
 end

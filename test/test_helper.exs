@@ -11,6 +11,6 @@
 #
 # To run these tests locally:
 #   mix test --include s3 --include gcs --include azure --include mongo --include mnesia --include python
-ExUnit.configure(exclude: [:s3, :gcs, :azure, :mongo, :mnesia, :python])
+ExUnit.configure(exclude: [:s3, :gcs, :azure, :mongo, :mnesia, :python, :nx_integration])
 
 ExUnit.start()
