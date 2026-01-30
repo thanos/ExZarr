@@ -1,0 +1,847 @@
+# Benchmarking Zarr: Access Patterns and Performance
+
+```elixir
+Mix.install([
+  {:ex_zarr, "~> 1.0"},
+  {:nx, "~> 0.7"},
+  {:kino, "~> 0.13"},
+  {:kino_vega_lite, "~> 0.1"}
+])
+```
+
+## Introduction: What is Being Measured
+
+This notebook teaches benchmarking methodology for Zarr access patterns. The goal is to understand performance characteristics, not to prove superiority of any format.
+
+**Important Disclaimers:**
+
+1. **Synthetic Data**: Benchmarks use generated data, not real-world datasets
+2. **Memory Backend**: Results from :memory storage don't reflect disk or cloud performance
+3. **Relative Comparison**: Absolute numbers are system-dependent and not generalizable
+4. **Limited Scope**: Focuses on read patterns; write performance requires separate analysis
+5. **No Parquet Implementation**: Conceptual comparison only (Parquet tooling limited in Elixir)
+
+**What We Measure:**
+
+- **Sequential Access**: Reading data in storage order
+- **Random Access**: Reading scattered locations
+- **Chunk Size Impact**: How chunking affects performance
+- **Slice Patterns**: Different query shapes and their costs
+
+**What We Don't Measure:**
+
+- Network latency (cloud storage)
+- Compression/decompression overhead
+- Write performance
+- Concurrent access patterns
+- Cache effects in repeated runs
+
+**Learning Objectives:**
+
+1. Understand timing methodology
+2. Recognize measurement limitations
+3. Interpret results cautiously
+4. Design meaningful benchmarks for your use case
+
+## Benchmark Setup
+
+Create repeatable timing infrastructure:
+
+```elixir
+defmodule BenchmarkUtils do
+  @moduledoc """
+  Utilities for benchmarking Zarr access patterns.
+  """
+
+  def time_operation(label, func) do
+    # Warmup run (not timed)
+    _ = func.()
+
+    # Wait for GC
+    :erlang.garbage_collect()
+    Process.sleep(10)
+
+    # Timed runs
+    num_runs = 5
+
+    times =
+      for run <- 1..num_runs do
+        start_time = System.monotonic_time(:microsecond)
+        result = func.()
+        end_time = System.monotonic_time(:microsecond)
+        elapsed = end_time - start_time
+
+        # Keep result alive to prevent optimization
+        _ = result
+
+        elapsed
+      end
+
+    mean_time = Enum.sum(times) / num_runs
+    min_time = Enum.min(times)
+    max_time = Enum.max(times)
+
+    std_dev =
+      if num_runs > 1 do
+        variance =
+          times
+          |> Enum.map(fn t -> :math.pow(t - mean_time, 2) end)
+          |> Enum.sum()
+          |> Kernel./(num_runs - 1)
+
+        :math.sqrt(variance)
+      else
+        0.0
+      end
+
+    %{
+      label: label,
+      mean_us: mean_time,
+      min_us: min_time,
+      max_us: max_time,
+      std_dev_us: std_dev,
+      num_runs: num_runs
+    }
+  end
+
+  def format_time(microseconds) when microseconds >= 1_000_000 do
+    "#{Float.round(microseconds / 1_000_000, 2)}s"
+  end
+
+  def format_time(microseconds) when microseconds >= 1_000 do
+    "#{Float.round(microseconds / 1_000, 2)}ms"
+  end
+
+  def format_time(microseconds) do
+    "#{round(microseconds)}μs"
+  end
+
+  def print_result(result) do
+    IO.puts("\n#{result.label}:")
+    IO.puts("  Mean: #{format_time(result.mean_us)}")
+    IO.puts("  Min: #{format_time(result.min_us)}")
+    IO.puts("  Max: #{format_time(result.max_us)}")
+    IO.puts("  Std Dev: #{format_time(result.std_dev_us)}")
+    IO.puts("  Runs: #{result.num_runs}")
+  end
+
+  def throughput_mb_per_sec(bytes, microseconds) do
+    megabytes = bytes / 1_048_576
+    seconds = microseconds / 1_000_000
+    megabytes / seconds
+  end
+end
+
+IO.puts("Benchmark utilities loaded")
+```
+
+```elixir
+# Create test dataset
+defmodule DatasetGenerator do
+  def create_dataset(shape, chunks, dtype \\ :float32) do
+    {:ok, array} =
+      ExZarr.create(
+        shape: shape,
+        chunks: chunks,
+        dtype: dtype,
+        storage: :memory
+      )
+
+    # Generate data
+    data = Nx.random_uniform(shape, type: dtype)
+    :ok = ExZarr.Nx.to_zarr(data, array)
+
+    array
+  end
+
+  def calculate_size(shape, dtype) do
+    elements =
+      shape
+      |> Tuple.to_list()
+      |> Enum.reduce(1, &(&1 * &2))
+
+    bytes_per_element =
+      case dtype do
+        :float64 -> 8
+        :float32 -> 4
+        :int64 -> 8
+        :int32 -> 4
+        :int16 -> 2
+        :uint16 -> 2
+        :int8 -> 1
+        :uint8 -> 1
+        _ -> 4
+      end
+
+    elements * bytes_per_element
+  end
+end
+
+IO.puts("Dataset generator ready")
+```
+
+## Sequential vs Random Access
+
+Compare reading data in order versus scattered locations.
+
+```elixir
+# Create a 2D dataset for testing
+rows = 1000
+cols = 1000
+chunk_size = 100
+
+IO.puts("Creating test dataset...")
+IO.puts("  Shape: #{rows}x#{cols}")
+IO.puts("  Chunk size: #{chunk_size}x#{chunk_size}")
+
+array_sequential = DatasetGenerator.create_dataset({rows, cols}, {chunk_size, chunk_size})
+
+IO.puts("Dataset created")
+```
+
+```elixir
+# Benchmark 1: Sequential row access
+IO.puts("\n=== Sequential Access ===")
+
+sequential_result =
+  BenchmarkUtils.time_operation("Read 10 sequential 100x1000 rows", fn ->
+    # Read 10 consecutive rows (spans multiple chunks vertically)
+    for start_row <- [0, 100, 200, 300, 400, 500, 600, 700, 800, 900] do
+      {:ok, _slice} = ExZarr.slice(array_sequential, {start_row..(start_row + 99), 0..(cols - 1)})
+    end
+  end)
+
+BenchmarkUtils.print_result(sequential_result)
+
+bytes_read = 10 * 100 * cols * 4
+throughput = BenchmarkUtils.throughput_mb_per_sec(bytes_read, sequential_result.mean_us)
+IO.puts("  Throughput: #{Float.round(throughput, 2)} MB/s")
+```
+
+```elixir
+# Benchmark 2: Random row access
+IO.puts("\n=== Random Access ===")
+
+# Generate random row indices
+random_rows = for _ <- 1..10, do: :rand.uniform(900)
+
+random_result =
+  BenchmarkUtils.time_operation("Read 10 random 100x1000 rows", fn ->
+    for start_row <- random_rows do
+      {:ok, _slice} = ExZarr.slice(array_sequential, {start_row..(start_row + 99), 0..(cols - 1)})
+    end
+  end)
+
+BenchmarkUtils.print_result(random_result)
+
+throughput_random = BenchmarkUtils.throughput_mb_per_sec(bytes_read, random_result.mean_us)
+IO.puts("  Throughput: #{Float.round(throughput_random, 2)} MB/s")
+```
+
+```elixir
+# Compare sequential vs random
+comparison = """
+## Sequential vs Random Access Comparison
+
+| Access Pattern | Mean Time | Throughput | Relative |
+|----------------|-----------|------------|----------|
+| Sequential | #{BenchmarkUtils.format_time(sequential_result.mean_us)} | #{Float.round(throughput, 2)} MB/s | 1.0x |
+| Random | #{BenchmarkUtils.format_time(random_result.mean_us)} | #{Float.round(throughput_random, 2)} MB/s | #{Float.round(random_result.mean_us / sequential_result.mean_us, 2)}x |
+
+**Observations:**
+
+**Sequential Access:**
+- Reads align with chunk boundaries
+- Predictable access pattern
+- Better cache utilization (in disk-based storage)
+- Fewer chunk loads per row
+
+**Random Access:**
+- May require loading new chunks for each read
+- Unpredictable pattern
+- Reduced cache benefit
+- More chunk loads overall
+
+**Memory Backend Note:**
+In-memory storage shows minimal difference. Disk or cloud storage would amplify the sequential advantage due to:
+- Prefetching optimizations
+- Filesystem cache
+- Network latency for scattered requests
+"""
+
+Kino.Markdown.new(comparison)
+```
+
+## Chunk Size Effects
+
+Examine how chunk size impacts read performance for different access patterns.
+
+```elixir
+defmodule ChunkSizeExperiment do
+  def run_experiment(shape, chunk_sizes, slice_spec) do
+    {rows, cols} = shape
+    {slice_rows, slice_cols} = slice_spec
+
+    IO.puts("\n=== Chunk Size Experiment ===")
+    IO.puts("Array: #{rows}x#{cols}")
+    IO.puts("Query: #{slice_rows}x#{slice_cols}")
+    IO.puts("")
+
+    results =
+      for chunk_size <- chunk_sizes do
+        IO.puts("Testing chunk size: #{chunk_size}x#{chunk_size}...")
+
+        array = DatasetGenerator.create_dataset(shape, {chunk_size, chunk_size})
+
+        result =
+          BenchmarkUtils.time_operation(
+            "Chunk #{chunk_size}x#{chunk_size}",
+            fn ->
+              {:ok, _slice} = ExZarr.slice(array, {0..(slice_rows - 1), 0..(slice_cols - 1)})
+            end
+          )
+
+        # Calculate chunks accessed
+        chunks_y = ceil(slice_rows / chunk_size)
+        chunks_x = ceil(slice_cols / chunk_size)
+        total_chunks = chunks_y * chunks_x
+
+        Map.put(result, :chunks_accessed, total_chunks)
+      end
+
+    results
+  end
+
+  defp ceil(a, b) when rem(a, b) == 0, do: div(a, b)
+  defp ceil(a, b), do: div(a, b) + 1
+end
+
+# Run experiment with different chunk sizes
+shape = {2000, 2000}
+chunk_sizes = [50, 100, 200, 500, 1000]
+slice_spec = {500, 500}
+
+chunk_results = ChunkSizeExperiment.run_experiment(shape, chunk_sizes, slice_spec)
+
+IO.puts("\nExperiment complete")
+```
+
+```elixir
+# Display results table
+chunk_table_data =
+  chunk_results
+  |> Enum.map(fn result ->
+    %{
+      "Chunk Size" => result.label,
+      "Chunks Accessed" => result.chunks_accessed,
+      "Mean Time" => BenchmarkUtils.format_time(result.mean_us),
+      "Std Dev" => BenchmarkUtils.format_time(result.std_dev_us)
+    }
+  end)
+
+Kino.DataTable.new(chunk_table_data)
+```
+
+```elixir
+# Visualize chunk size vs time
+alias VegaLite, as: Vl
+
+chart_data =
+  chunk_results
+  |> Enum.map(fn result ->
+    # Extract chunk size from label (e.g., "Chunk 100x100" -> 100)
+    chunk_size =
+      result.label
+      |> String.split(" ")
+      |> Enum.at(1)
+      |> String.split("x")
+      |> List.first()
+      |> String.to_integer()
+
+    %{
+      chunk_size: chunk_size,
+      time_ms: result.mean_us / 1000,
+      chunks_accessed: result.chunks_accessed
+    }
+  end)
+
+Vl.new(width: 500, height: 300, title: "Chunk Size vs Read Time")
+|> Vl.data_from_values(chart_data)
+|> Vl.mark(:line, point: true)
+|> Vl.encode_field(:x, "chunk_size", type: :quantitative, title: "Chunk Size (pixels)", scale: [type: "log"])
+|> Vl.encode_field(:y, "time_ms", type: :quantitative, title: "Time (ms)")
+```
+
+```elixir
+# Chart: Chunks accessed vs chunk size
+Vl.new(width: 500, height: 300, title: "Chunks Accessed vs Chunk Size")
+|> Vl.data_from_values(chart_data)
+|> Vl.mark(:bar)
+|> Vl.encode_field(:x, "chunk_size", type: :ordinal, title: "Chunk Size (pixels)")
+|> Vl.encode_field(:y, "chunks_accessed", type: :quantitative, title: "Chunks Accessed")
+```
+
+```elixir
+# Analysis
+chunk_analysis = """
+## Chunk Size Analysis
+
+**Query:** 500×500 region from 2000×2000 array
+
+**Key Findings:**
+
+1. **Chunks Accessed:**
+   - Smaller chunks: More chunks required
+   - Larger chunks: Fewer chunks but more overhead per chunk
+
+2. **Performance Trade-offs:**
+   - Very small chunks (50×50): #{Enum.at(chunk_results, 0).chunks_accessed} chunks accessed
+   - Very large chunks (1000×1000): #{Enum.at(chunk_results, 4).chunks_accessed} chunks accessed
+
+3. **Memory Backend Limitation:**
+   In-memory storage doesn't show true chunk overhead. With disk/cloud storage:
+   - Each chunk access has latency cost
+   - More chunks = more round trips
+   - Larger chunks = more wasted bandwidth
+
+**Optimal Chunk Size:**
+
+Depends on:
+- **Access patterns**: Small regions favor smaller chunks
+- **Dataset dimensions**: Avoid single-chunk or too-many-chunks extremes
+- **Storage backend**: Network storage favors larger chunks (fewer requests)
+- **Compression**: Larger chunks compress better but decompress slower
+
+**Rule of Thumb:**
+- Target 10-100 MB uncompressed per chunk
+- Balance between access granularity and overhead
+- Profile with real access patterns
+"""
+
+Kino.Markdown.new(chunk_analysis)
+```
+
+## Interpretation of Results
+
+Understanding what benchmarks mean and their limitations.
+
+```elixir
+# Comprehensive benchmark suite
+defmodule ComprehensiveBenchmark do
+  def run_suite do
+    IO.puts("Running comprehensive benchmark suite...\n")
+
+    # Small queries on large array
+    shape = {5000, 5000}
+    chunks = {250, 250}
+    array = DatasetGenerator.create_dataset(shape, chunks)
+
+    results = []
+
+    # 1. Point read
+    point_result =
+      BenchmarkUtils.time_operation("Point read (1x1)", fn ->
+        {:ok, _} = ExZarr.slice(array, {100..100, 100..100})
+      end)
+
+    results = [point_result | results]
+
+    # 2. Small slice
+    small_result =
+      BenchmarkUtils.time_operation("Small slice (50x50)", fn ->
+        {:ok, _} = ExZarr.slice(array, {100..149, 100..149})
+      end)
+
+    results = [small_result | results]
+
+    # 3. Medium slice
+    medium_result =
+      BenchmarkUtils.time_operation("Medium slice (500x500)", fn ->
+        {:ok, _} = ExZarr.slice(array, {100..599, 100..599})
+      end)
+
+    results = [medium_result | results]
+
+    # 4. Row slice
+    row_result =
+      BenchmarkUtils.time_operation("Row slice (1x5000)", fn ->
+        {:ok, _} = ExZarr.slice(array, {100..100, 0..4999})
+      end)
+
+    results = [row_result | results]
+
+    # 5. Column slice
+    col_result =
+      BenchmarkUtils.time_operation("Column slice (5000x1)", fn ->
+        {:ok, _} = ExZarr.slice(array, {0..4999, 100..100})
+      end)
+
+    results = [col_result | results]
+
+    # 6. Full array read
+    full_result =
+      BenchmarkUtils.time_operation("Full array (5000x5000)", fn ->
+        {:ok, _} = ExZarr.slice(array, {0..4999, 0..4999})
+      end)
+
+    results = [full_result | results]
+
+    Enum.reverse(results)
+  end
+end
+
+comprehensive_results = ComprehensiveBenchmark.run_suite()
+
+IO.puts("\nBenchmark suite complete")
+```
+
+```elixir
+# Display comprehensive results
+comprehensive_table =
+  comprehensive_results
+  |> Enum.map(fn result ->
+    %{
+      "Query Type" => result.label,
+      "Mean Time" => BenchmarkUtils.format_time(result.mean_us),
+      "Min Time" => BenchmarkUtils.format_time(result.min_us),
+      "Max Time" => BenchmarkUtils.format_time(result.max_us),
+      "Std Dev" => BenchmarkUtils.format_time(result.std_dev_us)
+    }
+  end)
+
+Kino.DataTable.new(comprehensive_table)
+```
+
+```elixir
+# Interpretation guide
+interpretation = """
+## Interpretation Guide
+
+### What These Numbers Mean
+
+**Absolute Values:**
+- System-dependent (CPU, memory, OS)
+- Memory backend is unrealistically fast
+- Don't compare across machines or environments
+- Don't use for production capacity planning
+
+**Relative Patterns:**
+- Compare ratios, not absolute times
+- Identify trends (linear, logarithmic, exponential)
+- Understand access pattern characteristics
+- Guide chunk size selection
+
+### Common Misinterpretations
+
+**Mistake 1: "Zarr is faster than Parquet"**
+- Wrong: Format speed depends on use case, implementation, and environment
+- Better: "For this access pattern, chunked formats may be advantageous"
+
+**Mistake 2: "Larger chunks are always better"**
+- Wrong: Chunk size is access-pattern dependent
+- Better: "For our typical queries, 250×250 chunks balance granularity and overhead"
+
+**Mistake 3: "These benchmarks prove production performance"**
+- Wrong: Synthetic data on memory backend doesn't reflect reality
+- Better: "These experiments help understand trade-offs; validate with real workloads"
+
+### What to Measure in Production
+
+1. **End-to-end latency**: Including network, caching, queuing
+2. **Percentiles**: P50, P95, P99 (not just mean)
+3. **Concurrency**: Multiple users/processes accessing simultaneously
+4. **Cost**: Cloud storage requests and data transfer
+5. **Real queries**: Actual user access patterns, not synthetic
+
+### Red Flags
+
+Be skeptical if benchmarks show:
+- 100x improvements (usually measurement error)
+- Perfect scaling (real systems have overhead)
+- Zero variance (suspicious statistical artifact)
+- Comparisons without error bars (ignoring uncertainty)
+
+### Designing Better Benchmarks
+
+1. **Use real data**: Or data with similar statistical properties
+2. **Measure what matters**: Focus on your actual use case
+3. **Include variance**: Report confidence intervals
+4. **Control variables**: Change one thing at a time
+5. **Document everything**: Versions, settings, environment
+6. **Warm up**: First run often slower (caching, JIT)
+7. **Repeat**: Multiple runs reduce measurement noise
+"""
+
+Kino.Markdown.new(interpretation)
+```
+
+## Conceptual Comparison: Zarr vs Parquet
+
+Since Elixir lacks mature Parquet libraries, we discuss conceptual trade-offs.
+
+```elixir
+format_comparison = """
+## Zarr vs Parquet: Conceptual Comparison
+
+**Note:** This is a conceptual discussion. Actual performance requires implementation in comparable environments.
+
+### Storage Layout
+
+**Zarr:**
+- Chunked N-dimensional arrays
+- Regular grid structure
+- Each chunk is independently compressed
+- Metadata in JSON (separate from data)
+
+**Parquet:**
+- Columnar storage for tables
+- Row groups and column chunks
+- Footer contains metadata
+- Optimized for tabular (2D) data
+
+### Ideal Use Cases
+
+**Zarr Advantages:**
+- Multi-dimensional arrays (3D, 4D, etc.)
+- Spatial/temporal subsets
+- Append-along-time workflows
+- Cloud-native access (object storage)
+- Parallel writes to different chunks
+
+**Parquet Advantages:**
+- Tabular/relational data
+- Column-oriented analytics
+- SQL-style queries
+- Rich type system (nested structures)
+- Excellent ecosystem (Spark, Pandas, Arrow)
+
+### Access Pattern Performance
+
+| Pattern | Zarr | Parquet | Notes |
+|---------|------|---------|-------|
+| Read subset of columns | Moderate | Excellent | Parquet column pruning |
+| Read spatial region | Excellent | Poor | Zarr chunks align spatially |
+| Time series (one location) | Moderate | Poor | Depends on chunk layout |
+| Full table scan | Good | Excellent | Parquet columnar compression |
+| Random point access | Moderate | Poor | Both require chunk/row group load |
+| Append rows | Moderate | Good | Both support append |
+| Update values | Poor | Poor | Both immutable by design |
+
+### Compression
+
+**Zarr:**
+- Per-chunk compression
+- Flexible codec pipeline
+- Blosc, Zstd, LZ4, Gzip options
+- Good for floating-point arrays
+
+**Parquet:**
+- Per-column-chunk compression
+- Dictionary encoding
+- Run-length encoding
+- Excellent for categorical/string data
+
+### Metadata
+
+**Zarr:**
+- Flexible JSON attributes
+- Dimension names external (or in attrs)
+- Coordinate arrays stored separately
+- Group hierarchy for organization
+
+**Parquet:**
+- Schema in footer
+- Rich type information
+- Statistics per column chunk
+- No native multi-dimensional support
+
+### When to Choose Zarr
+
+- Multi-dimensional scientific data
+- Geospatial imagery, climate models
+- Need selective spatial access
+- Cloud-native workflows
+- Interoperability with Python/Julia/R zarr implementations
+
+### When to Choose Parquet
+
+- Tabular/relational data
+- Analytics queries (group by, aggregations)
+- Integration with Spark, Presto, Athena
+- Strong typing requirements
+- Existing Parquet ecosystem
+
+### When Either Works
+
+- Time series data (design chunks appropriately)
+- Log data (if access patterns support either)
+- Archival storage (both compress well)
+
+### The Real Answer
+
+"It depends" — seriously. Benchmark with:
+- Your actual data
+- Your actual queries
+- Your actual infrastructure
+- Your actual team's expertise
+
+Don't choose based on microbenchmarks or format wars. Choose based on your requirements.
+"""
+
+Kino.Markdown.new(format_comparison)
+```
+
+## Benchmark Reproducibility
+
+Ensuring others can verify your results.
+
+```elixir
+defmodule BenchmarkReport do
+  def generate_report(results, metadata) do
+    """
+    # Benchmark Report
+
+    ## Environment
+
+    - Elixir: #{System.version()}
+    - OTP: #{System.otp_release()}
+    - ExZarr: #{metadata[:ex_zarr_version] || "unknown"}
+    - Nx: #{metadata[:nx_version] || "unknown"}
+    - OS: #{metadata[:os]}
+    - CPU: #{metadata[:cpu] || "unknown"}
+    - Memory: #{metadata[:memory] || "unknown"}
+    - Date: #{DateTime.utc_now() |> DateTime.to_iso8601()}
+
+    ## Configuration
+
+    - Storage backend: :memory
+    - Warmup runs: 1
+    - Timed runs: 5
+    - GC between runs: yes
+
+    ## Results
+
+    #{format_results_table(results)}
+
+    ## Reproducibility Notes
+
+    - All data is synthetic (Nx.random_uniform)
+    - Memory backend used (no disk/network I/O)
+    - Single-threaded execution
+    - No concurrent load
+
+    ## Limitations
+
+    - Results specific to this environment
+    - Memory backend != real storage performance
+    - Synthetic data may not match real compression ratios
+    - No caching effects measured
+    - No multi-user scenarios
+
+    ## To Reproduce
+
+    1. Clone repository
+    2. Run notebook in Livebook
+    3. Compare patterns, not absolute numbers
+    4. Adjust for your data characteristics
+    """
+  end
+
+  defp format_results_table(results) do
+    header = "| Benchmark | Mean | Min | Max | Std Dev |\n|-----------|------|-----|-----|---------|"
+
+    rows =
+      results
+      |> Enum.map(fn r ->
+        "| #{r.label} | #{BenchmarkUtils.format_time(r.mean_us)} | #{BenchmarkUtils.format_time(r.min_us)} | #{BenchmarkUtils.format_time(r.max_us)} | #{BenchmarkUtils.format_time(r.std_dev_us)} |"
+      end)
+      |> Enum.join("\n")
+
+    header <> "\n" <> rows
+  end
+end
+
+# Generate report
+report_metadata = %{
+  os: "#{:erlang.system_info(:system_architecture)}",
+  memory: "#{:erlang.memory(:total) |> div(1_048_576)} MB",
+  ex_zarr_version: "1.0.0",
+  nx_version: "0.7.x"
+}
+
+report = BenchmarkReport.generate_report(comprehensive_results, report_metadata)
+
+Kino.Markdown.new(report)
+```
+
+## Summary
+
+This notebook taught benchmarking methodology for Zarr:
+
+**Key Principles:**
+
+1. **Measure what matters**: Focus on your actual use case
+2. **Control variables**: Change one thing at a time
+3. **Report uncertainty**: Include variance and confidence intervals
+4. **Document thoroughly**: Environment, versions, configuration
+5. **Interpret cautiously**: Patterns over absolute numbers
+
+**What We Learned:**
+
+- **Sequential vs Random**: Access patterns affect performance
+- **Chunk Size Trade-offs**: Balance granularity and overhead
+- **Benchmark Limitations**: Synthetic data and memory backend don't reflect production
+- **Reproducibility**: Detailed reporting enables verification
+
+**What We Didn't Learn:**
+
+- Absolute Zarr performance (environment-dependent)
+- Zarr vs Parquet in practice (needs real implementations)
+- Production characteristics (network, caching, concurrency)
+- Your specific use case (requires custom benchmarks)
+
+**Best Practices:**
+
+1. Benchmark with real data and queries
+2. Test on target infrastructure (disk, S3, etc.)
+3. Include error bars and percentiles
+4. Don't optimize prematurely
+5. Validate assumptions with profiling
+6. Consider cost, not just speed
+7. Document everything for reproducibility
+
+**Next Steps:**
+
+- Profile your actual workload
+- Test with real storage backends
+- Measure end-to-end latency
+- Consider operational costs
+- Validate with production traffic
+
+## Open Questions
+
+**Format Selection:**
+
+How do you choose between Zarr, Parquet, HDF5, or NetCDF for a new project?
+
+**Cloud Performance:**
+
+What benchmarking methodology accurately reflects S3/GCS access patterns?
+
+**Concurrency:**
+
+How do you benchmark multi-user access and write contention?
+
+**Cost:**
+
+How do you balance performance against storage and request costs?
+
+**Compression:**
+
+Which codec benchmarks matter for your data types and access patterns?
+
+**Tooling:**
+
+What benchmarking infrastructure makes sense for Elixir/BEAM applications?
+
+Explore these questions as you design performance-critical systems with ExZarr.
