@@ -1,0 +1,188 @@
+# ExZarr 04.01 — Embeddings in Zarr (chunked vectors + similarity scan)
+
+This is a **no-network** GenAI-style tutorial:
+- we generate a tiny corpus
+- compute toy embeddings (hashing trick)
+- store them in ExZarr
+- do a cosine similarity “search” by scanning chunks
+
+> In a real system you would swap in a true embedding model or an API call.
+
+---
+
+## Setup
+
+```elixir
+Mix.install([{:ex_zarr, path: ".."}])
+
+alias ExZarr.Array
+alias ExZarr.Gallery.{Pack, SampleData, Metrics}
+```
+
+---
+
+## 1) A tiny corpus
+
+```elixir
+corpus = SampleData.tiny_corpus()
+Enum.map(corpus, fn {id, text} -> {id, String.slice(text, 0, 50) <> "..."} end)
+```
+
+---
+
+## 2) Toy embedding function (hashing trick)
+
+We’ll create a vector of dimension `dim`, and for each token we add ±1.0 into a hashed bucket.
+
+This is *not* SOTA; it’s a deterministic stand‑in so the notebook is runnable offline.
+
+```elixir
+dim = 128
+
+tokenize = fn text ->
+  text
+  |> String.downcase()
+  |> String.replace(~r/[^a-z0-9\s]/u, " ")
+  |> String.split(~r/\s+/u, trim: true)
+end
+
+embed = fn text ->
+  vec = :array.new(dim, default: 0.0)
+
+  tokens = tokenize.(text)
+
+  vec =
+    Enum.reduce(tokens, vec, fn tok, acc ->
+      h = :erlang.phash2(tok, dim)
+      sign = if rem(:erlang.phash2(tok <> "!", 2), 2) == 0, do: 1.0, else: -1.0
+      :array.set(h, :array.get(h, acc) + sign, acc)
+    end)
+
+  # convert to list
+  for i <- 0..(dim - 1), do: :array.get(i, vec)
+end
+
+embs =
+  corpus
+  |> Enum.map(fn {id, text} -> {id, embed.(text)} end)
+
+{hd(embs) |> elem(0), hd(embs) |> elem(1) |> Enum.take(8)}
+```
+
+---
+
+## 3) Store embeddings in ExZarr
+
+We’ll store a `num_docs x dim` float array. Chunk by rows so each chunk is a mini-batch.
+
+```elixir
+num_docs = length(embs)
+chunks = {min(num_docs, 64), dim}
+
+{:ok, a} =
+  Array.create(
+    shape: {num_docs, dim},
+    chunks: chunks,
+    dtype: :float32,
+    compressor: :zstd,
+    storage: :memory
+  )
+
+flat =
+  embs
+  |> Enum.flat_map(fn {_id, vec} -> vec end)
+
+bin = Pack.pack(flat, :float32)
+
+:ok =
+  Array.set_slice(a, bin,
+    start: {0, 0},
+    stop: {num_docs, dim}
+  )
+
+%{shape: a.shape, chunks: a.chunks}
+```
+
+---
+
+## 4) Cosine similarity search by chunk scan
+
+We’ll search with a query string: compute query embedding, then scan through the matrix by chunk.
+
+```elixir
+norm = fn v -> :math.sqrt(Enum.reduce(v, 0.0, fn x, acc -> acc + x * x end)) end
+dot = fn a, b -> Enum.zip(a, b) |> Enum.reduce(0.0, fn {x, y}, acc -> acc + x * y end) end
+
+cos = fn a, b ->
+  na = norm.(a)
+  nb = norm.(b)
+  if na == 0.0 or nb == 0.0, do: 0.0, else: dot.(a, b) / (na * nb)
+end
+
+query = "elixir concurrency and supervision"
+
+qvec = embed.(query)
+
+qvec_short = Enum.take(qvec, 8)
+
+{query, qvec_short}
+```
+
+---
+
+### Scan chunks
+
+We’ll read the full matrix in chunks (each chunk is `rows_in_chunk x dim`).
+
+```elixir
+doc_ids = Enum.map(embs, &elem(&1, 0))
+
+score_chunk = fn {_chunk_index, chunk_bin} ->
+  floats = Pack.unpack(chunk_bin, :float32)
+  rows = div(length(floats), dim)
+
+  floats
+  |> Enum.chunk_every(dim)
+  |> Enum.with_index()
+  |> Enum.map(fn {row_vec, i} ->
+    {i, cos.(qvec, row_vec)}
+  end)
+end
+
+{scored, us} =
+  Metrics.time(fn ->
+    Array.chunk_stream(a, parallel: 4, ordered: false)
+    |> Enum.flat_map(score_chunk)
+  end)
+
+# Convert local-in-chunk row indices to global indices is tricky without extra info.
+# For this tutorial we re-score by reading a full slice, which is fine for small data.
+# For production: keep chunk_index to compute global offset.
+
+{:ok, full_bin} = Array.to_binary(a)
+full = Pack.unpack(full_bin, :float32) |> Enum.chunk_every(dim)
+
+scores =
+  full
+  |> Enum.with_index()
+  |> Enum.map(fn {row, i} -> {Enum.at(doc_ids, i), cos.(qvec, row)} end)
+  |> Enum.sort_by(&elem(&1, 1), :desc)
+
+%{took: Metrics.human_us(us), top5: Enum.take(scores, 5)}
+```
+
+---
+
+## 5) Notes for “real” embeddings
+
+- Replace `embed/1` with a real encoder (Nx model, Bumblebee, a local GGUF model, or an API call).
+- Store doc ids + offsets in:
+  - sidecar JSON (simple), or
+  - a parallel Zarr array (e.g., fixed-size uint64 ids), or
+  - a dataset layout convention (group with arrays + attrs).
+
+---
+
+## Next
+
+- Finance: `livebooks/05_finance/05_01_tick_data_cube.livemd`

@@ -1,0 +1,484 @@
+# Zarr Fundamentals with ExZarr
+
+```elixir
+Mix.install([
+  {:ex_zarr, "~> 1.0"},
+  {:nx, "~> 0.7"},
+  {:kino, "~> 0.13"},
+  {:kino_vega_lite, "~> 0.1"}
+])
+```
+
+## Introduction: What Problem Zarr Solves
+
+Zarr is a format for storing chunked, compressed, N-dimensional arrays. It addresses critical challenges in scientific computing and data analysis:
+
+**Problem 1: Memory Constraints**
+
+Traditional array formats require loading entire datasets into memory. A 10GB dataset needs 10GB of RAM, making analysis impossible on typical machines.
+
+**Problem 2: Slow Sequential Access**
+
+Row-oriented formats like CSV require reading entire files to access a subset of data. Column-oriented formats like Parquet optimize for specific access patterns but remain inflexible.
+
+**Problem 3: Lack of Interoperability**
+
+Binary formats are often language-specific. Moving data between Python, R, Julia, and Elixir requires conversion tools and format translation.
+
+**Zarr's Solution: Chunked Storage**
+
+Zarr divides arrays into regular chunks stored separately. Benefits:
+
+- **Selective Loading**: Read only the chunks you need
+- **Parallel I/O**: Multiple processes can read/write different chunks simultaneously
+- **Compression**: Each chunk compresses independently
+- **Language Agnostic**: Simple directory structure with JSON metadata
+
+**Use Cases:**
+
+- Geospatial imagery (satellite data, climate models)
+- Microscopy (large 3D/4D volumes)
+- Machine learning (training datasets too large for memory)
+- Time series (sensor data, financial data)
+
+This notebook introduces Zarr's core concepts using ExZarr, the Elixir implementation.
+
+## Creating an Array
+
+A Zarr array requires three essential properties:
+
+1. **Shape**: Dimensions of the array (e.g., 1000x1000 for a 2D array)
+2. **Dtype**: Data type (e.g., :float64, :int32, :uint8)
+3. **Chunks**: How the array is divided into blocks
+
+```elixir
+# Create a 1000x1000 array with 100x100 chunks
+{:ok, array} =
+  ExZarr.create(
+    shape: {1000, 1000},
+    dtype: :float64,
+    chunks: {100, 100},
+    storage: :memory
+  )
+
+IO.puts("Array created successfully")
+IO.inspect(array, label: "Array struct")
+```
+
+**Understanding Chunks:**
+
+With shape `{1000, 1000}` and chunks `{100, 100}`:
+- Total elements: 1,000,000
+- Chunk dimensions: 100 x 100 = 10,000 elements per chunk
+- Number of chunks: (1000/100) x (1000/100) = 100 chunks (10x10 grid)
+
+Each chunk is stored and compressed independently.
+
+## Writing Data
+
+ExZarr integrates directly with Nx tensors for efficient data transfer.
+
+```elixir
+# Generate synthetic data: a gradient pattern
+tensor =
+  Nx.iota({1000, 1000}, type: {:f, 64})
+  |> Nx.divide(1000.0)
+
+# Write tensor to Zarr array
+:ok = ExZarr.Nx.to_zarr(tensor, array)
+
+IO.puts("Data written to array")
+IO.puts("Tensor shape: #{inspect(Nx.shape(tensor))}")
+IO.puts("Tensor type: #{inspect(Nx.type(tensor))}")
+```
+
+**What Happened:**
+
+1. Created a 1000x1000 tensor with values from 0.0 to 0.999
+2. ExZarr divided the tensor into 100 chunks (10x10 grid)
+3. Each chunk was encoded and stored in memory
+4. Metadata was written to track array structure
+
+The data is now stored in chunked format, ready for selective access.
+
+## Reading Slices
+
+Zarr's power lies in reading subsets without loading the entire array.
+
+```elixir
+# Read a small slice: rows 100-200, columns 300-400
+{:ok, slice} = ExZarr.slice(array, {100..199, 300..399})
+
+IO.puts("Slice shape: #{inspect(Nx.shape(slice))}")
+IO.puts("Slice type: #{inspect(Nx.type(slice))}")
+IO.puts("\nFirst 5x5 elements of slice:")
+IO.inspect(slice[0..4, 0..4])
+```
+
+**Chunk-Aware Reading:**
+
+When reading `{100..199, 300..399}`:
+- Requested region spans 100x100 elements
+- With chunks of 100x100, only 1 chunk is read
+- Remaining 99 chunks stay on disk/memory
+- Result: 99x faster than reading full array
+
+Try different slices to see which chunks are accessed:
+
+```elixir
+# This slice spans 4 chunks (2x2 region)
+{:ok, multi_chunk_slice} = ExZarr.slice(array, {50..149, 50..149})
+
+IO.puts("Multi-chunk slice shape: #{inspect(Nx.shape(multi_chunk_slice))}")
+IO.puts("This slice required reading 4 chunks (2x2 grid)")
+```
+
+## Inspecting Metadata
+
+ExZarr arrays carry metadata describing their structure. Let's build a helper to format this information.
+
+```elixir
+defmodule ZarrInspector do
+  @moduledoc """
+  Helper functions for inspecting Zarr array metadata.
+  """
+
+  def format_metadata(array) do
+    metadata = ExZarr.metadata(array)
+
+    """
+    ## Zarr Array Metadata
+
+    | Property | Value |
+    |----------|-------|
+    | Shape | #{inspect(metadata.shape)} |
+    | Chunks | #{inspect(metadata.chunks)} |
+    | Data Type | #{metadata.dtype} |
+    | Compressor | #{inspect(metadata.compressor)} |
+    | Fill Value | #{inspect(metadata.fill_value)} |
+    | Order | #{metadata.order} |
+    | Zarr Format | #{metadata.zarr_format} |
+
+    **Chunk Grid:**
+    - Dimensions: #{chunk_grid_dimensions(metadata.shape, metadata.chunks)}
+    - Total Chunks: #{total_chunks(metadata.shape, metadata.chunks)}
+    - Elements per Chunk: #{elements_per_chunk(metadata.chunks)}
+    - Bytes per Chunk: #{bytes_per_chunk(metadata.chunks, metadata.dtype)}
+    """
+  end
+
+  defp chunk_grid_dimensions(shape, chunks) do
+    shape
+    |> Tuple.to_list()
+    |> Enum.zip(Tuple.to_list(chunks))
+    |> Enum.map(fn {s, c} -> div(s, c) end)
+    |> Enum.join(" x ")
+  end
+
+  defp total_chunks(shape, chunks) do
+    shape
+    |> Tuple.to_list()
+    |> Enum.zip(Tuple.to_list(chunks))
+    |> Enum.map(fn {s, c} -> div(s, c) end)
+    |> Enum.reduce(1, &(&1 * &2))
+  end
+
+  defp elements_per_chunk(chunks) do
+    chunks
+    |> Tuple.to_list()
+    |> Enum.reduce(1, &(&1 * &2))
+    |> format_number()
+  end
+
+  defp bytes_per_chunk(chunks, dtype) do
+    elements =
+      chunks
+      |> Tuple.to_list()
+      |> Enum.reduce(1, &(&1 * &2))
+
+    bytes_per_element =
+      case dtype do
+        :float64 -> 8
+        :float32 -> 4
+        :int64 -> 8
+        :int32 -> 4
+        :int16 -> 2
+        :int8 -> 1
+        :uint64 -> 8
+        :uint32 -> 4
+        :uint16 -> 2
+        :uint8 -> 1
+        _ -> 8
+      end
+
+    format_bytes(elements * bytes_per_element)
+  end
+
+  defp format_number(n) when n >= 1_000_000,
+    do: "#{Float.round(n / 1_000_000, 2)}M"
+
+  defp format_number(n) when n >= 1_000,
+    do: "#{Float.round(n / 1_000, 2)}K"
+
+  defp format_number(n), do: "#{n}"
+
+  defp format_bytes(bytes) when bytes >= 1_048_576,
+    do: "#{Float.round(bytes / 1_048_576, 2)} MB"
+
+  defp format_bytes(bytes) when bytes >= 1024,
+    do: "#{Float.round(bytes / 1024, 2)} KB"
+
+  defp format_bytes(bytes), do: "#{bytes} bytes"
+end
+
+# Display metadata
+array
+|> ZarrInspector.format_metadata()
+|> Kino.Markdown.new()
+```
+
+## Visualization: Heatmap Slice
+
+Visualizing array data helps understand structure and values. Let's create a heatmap of a slice using VegaLite.
+
+```elixir
+alias VegaLite, as: Vl
+
+# Read a 50x50 slice for visualization
+{:ok, viz_slice} = ExZarr.slice(array, {200..249, 400..449})
+
+# Convert to list of points for VegaLite
+data =
+  for i <- 0..49, j <- 0..49 do
+    value = Nx.to_number(viz_slice[i][j])
+    %{x: j, y: i, value: value}
+  end
+
+# Create heatmap
+Vl.new(width: 400, height: 400, title: "Zarr Array Slice Heatmap (50x50)")
+|> Vl.data_from_values(data)
+|> Vl.mark(:rect)
+|> Vl.encode_field(:x, "x", type: :ordinal, title: "Column")
+|> Vl.encode_field(:y, "y", type: :ordinal, title: "Row")
+|> Vl.encode_field(:color, "value",
+  type: :quantitative,
+  scale: [scheme: "viridis"],
+  title: "Value"
+)
+```
+
+## Exercise: Change Chunk Size
+
+Now experiment with different chunk sizes to understand their impact.
+
+**Task:**
+
+1. Create three arrays with the same shape (1000x1000) but different chunk sizes
+2. Observe how chunk size affects the number of chunks
+3. Compare metadata across configurations
+
+```elixir
+# Configuration 1: Large chunks (500x500)
+{:ok, array_large_chunks} =
+  ExZarr.create(
+    shape: {1000, 1000},
+    dtype: :float64,
+    chunks: {500, 500},
+    storage: :memory
+  )
+
+# Configuration 2: Medium chunks (100x100) - our original
+{:ok, array_medium_chunks} =
+  ExZarr.create(
+    shape: {1000, 1000},
+    dtype: :float64,
+    chunks: {100, 100},
+    storage: :memory
+  )
+
+# Configuration 3: Small chunks (50x50)
+{:ok, array_small_chunks} =
+  ExZarr.create(
+    shape: {1000, 1000},
+    dtype: :float64,
+    chunks: {50, 50},
+    storage: :memory
+  )
+
+# Write same data to all three
+tensor = Nx.iota({1000, 1000}, type: {:f, 64})
+ExZarr.Nx.to_zarr(tensor, array_large_chunks)
+ExZarr.Nx.to_zarr(tensor, array_medium_chunks)
+ExZarr.Nx.to_zarr(tensor, array_small_chunks)
+
+IO.puts("Created three arrays with different chunk sizes")
+```
+
+```elixir
+# Compare metadata
+comparison = """
+## Chunk Size Comparison
+
+### Large Chunks (500x500)
+#{ZarrInspector.format_metadata(array_large_chunks)}
+
+### Medium Chunks (100x100)
+#{ZarrInspector.format_metadata(array_medium_chunks)}
+
+### Small Chunks (50x50)
+#{ZarrInspector.format_metadata(array_small_chunks)}
+
+## Analysis
+
+**Number of Chunks:**
+- Large: 4 chunks (2x2 grid)
+- Medium: 100 chunks (10x10 grid)
+- Small: 400 chunks (20x20 grid)
+
+**Trade-offs:**
+
+**Large Chunks:**
+- Fewer files/objects to manage
+- Lower metadata overhead
+- Reading small regions wastes bandwidth
+- Good for: sequential scans, full array operations
+
+**Small Chunks:**
+- More precise access patterns
+- Higher metadata overhead
+- More files/objects to manage
+- Good for: random access, sparse reads
+
+**Optimal Chunk Size:**
+The ideal chunk size depends on:
+- Access patterns (sequential vs random)
+- Data dimensions and structure
+- Compression characteristics
+- Storage backend (local disk, S3, etc.)
+- Available memory
+
+**Rule of Thumb:**
+Aim for chunk sizes between 10MB and 100MB uncompressed.
+"""
+
+Kino.Markdown.new(comparison)
+```
+
+```elixir
+# Demonstrate access pattern impact
+# Reading a small 50x50 region from different configurations
+
+read_region = fn array, label ->
+  start_time = System.monotonic_time(:microsecond)
+  {:ok, _slice} = ExZarr.slice(array, {100..149, 100..149})
+  end_time = System.monotonic_time(:microsecond)
+  elapsed = end_time - start_time
+
+  metadata = ExZarr.metadata(array)
+  chunk_count = calculate_chunks_accessed(metadata.chunks, {100..149, 100..149})
+
+  {label, elapsed, chunk_count}
+end
+
+calculate_chunks_accessed = fn chunks, {row_range, col_range} ->
+  {chunk_rows, chunk_cols} = chunks
+
+  start_row = div(row_range.first, chunk_rows)
+  end_row = div(row_range.last, chunk_rows)
+  start_col = div(col_range.first, chunk_cols)
+  end_col = div(col_range.last, chunk_cols)
+
+  (end_row - start_row + 1) * (end_col - start_col + 1)
+end
+
+results = [
+  read_region.(array_large_chunks, "Large chunks (500x500)"),
+  read_region.(array_medium_chunks, "Medium chunks (100x100)"),
+  read_region.(array_small_chunks, "Small chunks (50x50)")
+]
+
+IO.puts("Reading 50x50 region (rows 100-149, cols 100-149):\n")
+
+Enum.each(results, fn {label, elapsed_us, chunks_accessed} ->
+  IO.puts("#{label}:")
+  IO.puts("  Time: #{elapsed_us} microseconds")
+  IO.puts("  Chunks accessed: #{chunks_accessed}")
+  IO.puts("")
+end)
+```
+
+**Key Observations:**
+
+1. Small chunks access fewer chunks for small reads
+2. Large chunks may be faster due to less overhead
+3. Access patterns matter more than raw speed
+4. Memory backend speeds are comparable; differences amplify with remote storage
+
+**Your Turn:**
+
+Modify the exercise to:
+- Try different array shapes (e.g., 2000x500)
+- Experiment with non-square chunks (e.g., 200x50)
+- Test different slice regions
+- Observe chunk access patterns
+
+## Recap
+
+You've learned the fundamentals of Zarr:
+
+**Core Concepts:**
+
+1. **Chunked Storage**: Arrays divided into independently stored blocks
+2. **Selective Access**: Read only required chunks, not entire arrays
+3. **Metadata**: JSON-based structure description
+4. **Interoperability**: Language-agnostic format
+
+**ExZarr Operations:**
+
+- `ExZarr.create/1`: Create arrays with shape, dtype, chunks
+- `ExZarr.Nx.to_zarr/2`: Write Nx tensors to arrays
+- `ExZarr.slice/2`: Read array subsets
+- `ExZarr.metadata/1`: Inspect array structure
+
+**Chunk Size Considerations:**
+
+- Smaller chunks: better random access, more metadata
+- Larger chunks: better sequential access, fewer objects
+- Optimal size depends on use case and storage backend
+- Typical target: 10-100 MB per chunk
+
+**Next Steps:**
+
+- Explore compression codecs (gzip, blosc, zstd)
+- Try cloud storage backends (S3, GCS)
+- Learn about Zarr groups and hierarchies
+- Investigate parallel I/O patterns
+- Compare Zarr v2 vs v3 formats
+
+## Open Questions
+
+**Storage Backends:**
+
+How does chunk size affect performance on S3 vs local disk?
+
+**Compression:**
+
+What compression codec works best for your data type?
+
+**Multidimensional Access:**
+
+How do you optimize chunks for 3D, 4D, or higher-dimensional arrays?
+
+**Parallel Writes:**
+
+Can multiple processes safely write to different regions of the same array?
+
+**Version Control:**
+
+How can you track changes to Zarr arrays over time?
+
+**Integration:**
+
+How does ExZarr integrate with other Elixir data tools like Explorer, Scholar, or Axon?
+
+Explore these questions in advanced notebooks and the ExZarr documentation.

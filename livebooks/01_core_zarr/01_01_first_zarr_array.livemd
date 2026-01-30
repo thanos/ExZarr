@@ -1,0 +1,179 @@
+# ExZarr 01.01 — Your first Zarr array (create → write → read → stream → save → open)
+
+This Livebook is designed to run **inside the ExZarr repo**.
+
+If you opened it from `livebooks/01_core_zarr/`, it will use the local path dependency:
+
+```elixir
+Mix.install([{:ex_zarr, path: ".."}])
+```
+
+---
+
+## Setup
+
+```elixir
+Mix.install([{:ex_zarr, path: ".."}])
+
+alias ExZarr.Array
+alias ExZarr.Gallery.{Pack, SampleData, Metrics}
+```
+
+---
+
+## 1) Create a 2D array in memory
+
+We’ll create a `1000x1000` `:int32` array, chunked as `100x100`.
+
+```elixir
+{:ok, a} =
+  Array.create(
+    shape: {1000, 1000},
+    chunks: {100, 100},
+    dtype: :int32,
+    compressor: :zstd,
+    storage: :memory
+  )
+
+%{shape: a.shape, chunks: a.chunks, dtype: a.dtype, compressor: a.compressor}
+```
+
+---
+
+## 2) Write a `10x10` slice
+
+ExZarr expects row-major binary data. For `:int32` each value is 4 bytes.
+
+We’ll write values `1..100` into the top-left `10x10` region.
+
+```elixir
+data = Pack.pack(Enum.to_list(1..100), :int32)
+
+:ok =
+  Array.set_slice(a, data,
+    start: {0, 0},
+    stop: {10, 10}
+  )
+
+:ok
+```
+
+---
+
+## 3) Read the slice back
+
+```elixir
+{:ok, bin} =
+  Array.get_slice(a,
+    start: {0, 0},
+    stop: {10, 10}
+  )
+
+vals = Pack.unpack(bin, :int32)
+
+# show the first 20 values
+Enum.take(vals, 20)
+```
+
+---
+
+## 4) Write a larger region with a pattern (for chunk demos)
+
+We’ll write a `200x200` region. Values follow `r*1000 + c`.
+
+```elixir
+rows = 200
+cols = 200
+
+matrix = SampleData.matrix(rows, cols)
+bin2 = Pack.pack(matrix, :int32)
+
+:ok =
+  Array.set_slice(a, bin2,
+    start: {0, 0},
+    stop: {rows, cols}
+  )
+
+:ok
+```
+
+---
+
+## 5) Chunk streaming (sequential)
+
+Now that we wrote data spanning multiple chunks, we can stream the chunks without loading the whole array.
+
+```elixir
+{result, us} =
+  Metrics.time(fn ->
+    Array.chunk_stream(a)
+    |> Stream.take(5)
+    |> Enum.map(fn {chunk_index, chunk_bin} ->
+      {chunk_index, byte_size(chunk_bin)}
+    end)
+  end)
+
+%{first_5: result, took: Metrics.human_us(us)}
+```
+
+---
+
+## 6) Chunk streaming (parallel)
+
+For remote stores, parallel chunk reads often help. Here we just demonstrate the API.
+
+```elixir
+progress =
+  fn done, total ->
+    if rem(done, 10) == 0 or done == total do
+      IO.puts("Progress: #{done}/#{total}")
+    end
+  end
+
+{count, us} =
+  Metrics.time(fn ->
+    Array.chunk_stream(a, parallel: 4, ordered: false, progress_callback: progress)
+    |> Stream.take(50)
+    |> Enum.count()
+  end)
+
+%{chunks_seen: count, took: Metrics.human_us(us)}
+```
+
+---
+
+## 7) Save to disk and reopen
+
+```elixir
+base = Path.join(System.tmp_dir!(), "exzarr_livebook")
+path = Path.join(base, "array_2d")
+File.rm_rf!(path)
+File.mkdir_p!(path)
+
+:ok = Array.save(a, path: path)
+
+{:ok, reopened} = Array.open(path: path)
+
+%{saved_to: path, reopened_shape: reopened.shape, reopened_chunks: reopened.chunks}
+```
+
+---
+
+## 8) Verify the persisted data
+
+```elixir
+{:ok, bin} =
+  Array.get_slice(reopened,
+    start: {0, 0},
+    stop: {3, 6}
+  )
+
+Pack.unpack(bin, :int32)
+```
+
+---
+
+## Next
+
+- AI / GenAI: `livebooks/04_ai_genai/04_01_embeddings_in_zarr.livemd`
+- Finance: `livebooks/05_finance/05_01_tick_data_cube.livemd`
