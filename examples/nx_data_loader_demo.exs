@@ -16,7 +16,7 @@ IO.puts("Example 1: Basic Batch Streaming")
 batch_count = array
 |> DataLoader.batch_stream(32)
 |> Enum.count()
-IO.puts("  ✅ Loaded 1000 samples in #{batch_count} batches\n")
+IO.puts("  Loaded 1000 samples in #{batch_count} batches\n")
 
 IO.puts("Example 2: Shuffled Batching")
 {:ok, seq_array} = ExZarr.Nx.from_tensor(
@@ -27,11 +27,11 @@ IO.puts("Example 2: Shuffled Batching")
 shuffled_batches = seq_array
 |> DataLoader.shuffled_batch_stream(10, seed: 42)
 |> Enum.count()
-IO.puts("  ✅ Shuffled #{shuffled_batches} batches\n")
+IO.puts("  Shuffled #{shuffled_batches} batches\n")
 
 IO.puts("Example 3: Count Batches")
 num_batches = DataLoader.count_batches(array, 32)
-IO.puts("  ✅ Dataset has #{num_batches} batches of size 32\n")
+IO.puts("  Dataset has #{num_batches} batches of size 32\n")
 
 IO.puts("Example 4: Multi-Epoch Training")
 for epoch <- 1..3 do
@@ -41,4 +41,4 @@ for epoch <- 1..3 do
   IO.puts("  Epoch #{epoch}: #{count} batches")
 end
 
-IO.puts("\n✅ All examples completed successfully!")
+IO.puts("\nAll examples completed successfully!")

@@ -11,7 +11,7 @@ ExZarr implements the Zarr specification entirely in Elixir, providing persisten
 - Machine learning pipelines with large training datasets
 - Cloud-native data processing with S3/GCS/Azure backends
 - Real-time data ingestion with concurrent writes
-- Cross-language data exchange (Elixir ↔ Python/Julia/R)
+- Cross-language data exchange (Elixir <-> Python/Julia/R)
 
 **Production Status:**
 ExZarr v1.0.0+ is production-ready, with comprehensive test coverage including property-based tests and Python interoperability validation. The library implements both Zarr v2 (stable, widely supported) and Zarr v3 (modern, extended features) specifications.

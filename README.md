@@ -75,7 +75,7 @@ ExZarr v0.8+ includes major performance optimizations:
 **Benchmark results** (400×400 array, 16 chunks):
 - Before: 110ms per read
 - After: 4.2ms per read
-- **Speedup: 26×** 🚀
+- **Speedup: 26×**
 
 See [Performance Guide](guides/performance.md) for tuning recommendations and [Benchmarks](benchmarks/README.md) for running your own tests.
 

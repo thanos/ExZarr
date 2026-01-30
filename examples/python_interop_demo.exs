@@ -12,7 +12,7 @@ Mix.install([{:ex_zarr, path: "."}])
 
 defmodule PythonInteropDemo do
   def run do
-    IO.puts("=== ExZarr ↔ zarr-python Interoperability Demo ===\n")
+    IO.puts("=== ExZarr - zarr-python Interoperability Demo ===\n")
 
     # Create a temporary directory for the demo
     demo_dir = "/tmp/exzarr_python_demo_#{System.unique_integer([:positive])}"

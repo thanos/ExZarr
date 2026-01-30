@@ -30,7 +30,7 @@ defmodule ExZarr.CodecsExtendedTest do
     end
 
     test "compresses data with special characters" do
-      data = "Hello\n\t\r\0World! 🚀"
+      data = "Hello\n\t\r\0World! "
       assert {:ok, compressed} = Codecs.compress(data, :zlib)
       assert {:ok, ^data} = Codecs.decompress(compressed, :zlib)
     end

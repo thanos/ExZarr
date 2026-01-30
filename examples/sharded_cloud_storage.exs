@@ -125,7 +125,7 @@ defmodule ShardedCloudStorageExample do
   def run_with_s3 do
     # Check AWS credentials
     unless System.get_env("AWS_ACCESS_KEY_ID") do
-      IO.puts("❌ Error: AWS credentials not configured")
+      IO.puts("Error: AWS credentials not configured")
       IO.puts("   Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY")
       IO.puts("   Or run in simulation mode: SIMULATE=true elixir #{__ENV__.file}")
       System.halt(1)
@@ -314,7 +314,7 @@ defmodule ShardedCloudStorageExample do
     )
     ''')
 
-    IO.puts("\n📝 Sharding best practices:")
+    IO.puts("\nSharding best practices:")
     IO.puts("  1. Use sharding for cloud storage (S3, GCS, Azure)")
     IO.puts("  2. Don't use sharding for local filesystem")
     IO.puts("  3. Aim for 10-100 MB per shard")

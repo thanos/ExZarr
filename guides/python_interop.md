@@ -626,8 +626,8 @@ print(numcodecs.blosc.list_compressors())
 
 **Fully compatible:**
 - All 10 standard numeric dtypes (int8-int64, uint8-uint64, float32-float64)
-- Zarr v2 format (ExZarr ↔ zarr-python 2.x)
-- Zarr v3 format (ExZarr ↔ zarr-python 3.x)
+- Zarr v2 format (ExZarr <-> zarr-python 2.x)
+- Zarr v3 format (ExZarr <-> zarr-python 3.x)
 - Standard compressors (zlib, gzip, zstd, lz4, blosc, bzip2)
 - N-dimensional arrays (1D, 2D, 3D, ..., any dimension count)
 - Chunked reading and writing
@@ -636,7 +636,7 @@ print(numcodecs.blosc.list_compressors())
 - Fill values (uninitialized chunks)
 - Standard filters (shuffle, delta)
 
-### What Partially Works ⚠️
+### What Partially Works WARNING:
 
 **Requires coordination:**
 

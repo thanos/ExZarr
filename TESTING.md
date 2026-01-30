@@ -9,19 +9,19 @@ ExZarr uses a comprehensive testing strategy that separates self-contained tests
 These tests run without external dependencies and are executed in CI:
 
 **Storage Backends**:
-- ✅ **Memory** - In-memory ETS-based storage
-- ✅ **ETS** - Erlang Term Storage (in-memory)
-- ✅ **Mock** - Testing backend with error simulation
-- ✅ **Filesystem** - Local file system storage
-- ✅ **Zip** - Single-file archive storage
+- **Memory** - In-memory ETS-based storage
+- **ETS** - Erlang Term Storage (in-memory)
+- **Mock** - Testing backend with error simulation
+- **Filesystem** - Local file system storage
+- **Zip** - Single-file archive storage
 
 **Other Tests**:
-- ✅ Core array operations
-- ✅ Compression codecs (zlib, zstd, lz4, snappy, blosc, bzip2, crc32c)
-- ✅ Filter pipelines (Delta, Quantize, Shuffle, etc.)
-- ✅ Metadata serialization
-- ✅ Property-based tests
-- ✅ Custom codec/storage plugins
+- Core array operations
+- Compression codecs (zlib, zstd, lz4, snappy, blosc, bzip2, crc32c)
+- Filter pipelines (Delta, Quantize, Shuffle, etc.)
+- Metadata serialization
+- Property-based tests
+- Custom codec/storage plugins
 
 **Total**: 324 tests
 
@@ -30,14 +30,14 @@ These tests run without external dependencies and are executed in CI:
 These tests require external services and are excluded by default:
 
 **Cloud Storage**:
-- ❌ **S3** - AWS S3 (10 tests) - requires AWS credentials
-- ❌ **GCS** - Google Cloud Storage (13 tests) - requires GCS credentials
-- ❌ **Azure** - Azure Blob Storage (12 tests) - requires Azure credentials
-- ❌ **MongoDB** - MongoDB GridFS (17 tests) - requires MongoDB running
-- ❌ **Mnesia** - BEAM distributed database (12 tests) - requires Mnesia setup
+- **S3** - AWS S3 (10 tests) - requires AWS credentials
+- **GCS** - Google Cloud Storage (13 tests) - requires GCS credentials
+- **Azure** - Azure Blob Storage (12 tests) - requires Azure credentials
+- **MongoDB** - MongoDB GridFS (17 tests) - requires MongoDB running
+- **Mnesia** - BEAM distributed database (12 tests) - requires Mnesia setup
 
 **Python Interoperability**:
-- ❌ **Python Integration** - (14 tests) - requires Python 3 + zarr + numpy
+- **Python Integration** - (14 tests) - requires Python 3 + zarr + numpy
 
 **Total**: 78 tests (excluded)
 

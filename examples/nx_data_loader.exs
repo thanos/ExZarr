@@ -26,7 +26,7 @@ defmodule DataLoaderExample do
     example_3_count_batches()
     example_4_multi_epoch()
 
-    IO.puts("\n✅ All examples completed successfully!")
+    IO.puts("\nAll examples completed successfully!")
   end
 
   defp example_1_basic_batching do

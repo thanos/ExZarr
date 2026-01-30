@@ -14,7 +14,7 @@ Mix.install([
 
 defmodule NxOptimizedExample do
   @moduledoc """
-  Demonstrates optimized ExZarr ↔ Nx conversion.
+  Demonstrates optimized ExZarr <-> Nx conversion.
   """
 
   def run do
@@ -25,7 +25,7 @@ defmodule NxOptimizedExample do
     example_3_chunked_processing()
     example_4_ml_workflow()
 
-    IO.puts("\n✅ All examples completed successfully!")
+    IO.puts("\nAll examples completed successfully!")
   end
 
   defp example_1_basic_conversion do
@@ -48,9 +48,9 @@ defmodule NxOptimizedExample do
 
     # Verify round-trip
     if Nx.all(Nx.equal(tensor, restored_tensor)) |> Nx.to_number() == 1 do
-      IO.puts("✅ Round-trip successful: Data matches perfectly!\n")
+      IO.puts("Round-trip successful: Data matches perfectly!\n")
     else
-      IO.puts("❌ Round-trip failed: Data mismatch\n")
+      IO.puts("Round-trip failed: Data mismatch\n")
     end
 
     IO.puts(String.duplicate("-", 60) <> "\n")
@@ -87,7 +87,7 @@ defmodule NxOptimizedExample do
     IO.puts("\nTotal round-trip time: #{Float.round(total_time, 2)} ms")
     IO.puts("Data size: #{Float.round(data_size, 2)} MB")
     IO.puts("Throughput: #{Float.round(throughput, 1)} MB/s")
-    IO.puts("\n✅ Expected: 400-800 MB/s (vs 50-100 MB/s with nested tuples)\n")
+    IO.puts("\nExpected: 400-800 MB/s (vs 50-100 MB/s with nested tuples)\n")
 
     IO.puts(String.duplicate("-", 60) <> "\n")
   end
@@ -128,7 +128,7 @@ defmodule NxOptimizedExample do
       IO.puts("  Chunk #{idx}: mean=#{Float.round(mean, 4)}, std=#{Float.round(std, 4)}")
     end)
 
-    IO.puts("\n✅ Chunked processing enables constant memory usage\n")
+    IO.puts("\nChunked processing enables constant memory usage\n")
 
     IO.puts(String.duplicate("-", 60) <> "\n")
   end
@@ -182,7 +182,7 @@ defmodule NxOptimizedExample do
       IO.puts("  Batch #{batch_idx}: loaded 100 samples, mean=#{Float.round(batch_mean, 4)}")
     end
 
-    IO.puts("\n✅ Efficient batch loading for ML training")
+    IO.puts("\nEfficient batch loading for ML training")
     IO.puts("   Benefits:")
     IO.puts("   - Load only what's needed (memory efficient)")
     IO.puts("   - Fast conversion (direct binary transfer)")

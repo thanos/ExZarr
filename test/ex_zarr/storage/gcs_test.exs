@@ -49,7 +49,7 @@ defmodule ExZarr.Storage.GCSTest do
     if is_nil(endpoint) do
       IO.puts("""
 
-      ⚠️  GCS tests require fake-gcs-server configuration.
+      WARNING:  GCS tests require fake-gcs-server configuration.
       See test file for setup instructions.
       """)
     else

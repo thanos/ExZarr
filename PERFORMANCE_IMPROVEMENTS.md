@@ -13,8 +13,8 @@ Initial profiling revealed severe performance degradation for multi-chunk reads:
 | Operation | Chunks | Expected Scaling | Actual Scaling | Issue |
 |-----------|--------|------------------|----------------|-------|
 | Single chunk read | 1 | 1x | 1x (0.37ms) | ✓ Good |
-| 2x2 chunk read | 4 | 4x | 6.6x (2.46ms) | ⚠️ 65% overhead |
-| 4x4 chunk read | 16 | 16x | **298x** (110ms) | ❌ **CRITICAL** |
+| 2x2 chunk read | 4 | 4x | 6.6x (2.46ms) |  65% overhead |
+| 4x4 chunk read | 16 | 16x | **298x** (110ms) |**CRITICAL** |
 
 ### Root Cause Analysis
 

@@ -36,7 +36,7 @@ defmodule NxIntegrationExample do
   end
 
   defp example_1_basic_conversion do
-    IO.puts("Example 1: Basic Tensor ↔ Array Conversion\n")
+    IO.puts("Example 1: Basic Tensor <-> Array Conversion\n")
 
     # Create sample Nx tensor
     IO.puts("Creating Nx tensor...")
