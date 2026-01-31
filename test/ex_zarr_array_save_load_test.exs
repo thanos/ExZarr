@@ -143,6 +143,7 @@ defmodule ExZarr.ArraySaveLoadTest do
 
       # Check total directory size
       files = File.ls!(path)
+
       total_size =
         files
         |> Enum.map(fn f -> File.stat!(Path.join(path, f)).size end)
