@@ -69,8 +69,8 @@ defmodule ExZarr.MixProject do
       {:zigler, "~> 0.13", runtime: false},
 
       # Cloud storage backends (optional)
-      {:ex_aws, "~> 2.5", optional: true},
-      {:ex_aws_s3, "~> 2.5", optional: true},
+      {:ex_aws, github: "ex-aws/ex_aws", optional: true, override: true},
+      {:ex_aws_s3, github: "ex-aws/ex_aws_s3", optional: true},
       {:sweet_xml, "~> 0.7", optional: true},
       {:goth, "~> 1.4", optional: true},
       {:google_api_storage, "~> 0.36", optional: true},
