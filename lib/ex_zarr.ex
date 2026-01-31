@@ -306,4 +306,124 @@ defmodule ExZarr do
       Array.to_binary(array)
     end
   end
+
+  @doc """
+  Returns the metadata for a Zarr array.
+
+  Convenience function to access array metadata structure.
+
+  ## Examples
+
+      {:ok, array} = ExZarr.create(
+        shape: {1000, 1000},
+        chunks: {100, 100},
+        dtype: :float64
+      )
+
+      metadata = ExZarr.metadata(array)
+      IO.inspect(metadata.shape)      # {1000, 1000}
+      IO.inspect(metadata.chunks)     # {100, 100}
+      IO.inspect(metadata.dtype)      # :float64
+
+  ## Returns
+
+  - Metadata struct (either `ExZarr.Metadata` for v2 or `ExZarr.MetadataV3` for v3)
+  """
+  @spec metadata(Array.t()) :: ExZarr.Metadata.t() | ExZarr.MetadataV3.t()
+  def metadata(%Array{} = array) do
+    array.metadata
+  end
+
+  @doc """
+  Reads a slice of the array and returns it as an Nx tensor.
+
+  This is a convenience function that combines slicing and Nx conversion.
+  It accepts range-based slice specifications and returns Nx tensors directly.
+
+  ## Arguments
+
+  - `array` - The ExZarr array to read from
+  - `ranges` - Tuple of ranges, one per dimension (e.g., `{0..99, 0..99}`)
+
+  ## Examples
+
+      # Create and populate array
+      {:ok, array} = ExZarr.create(
+        shape: {1000, 1000},
+        chunks: {100, 100},
+        dtype: :float64
+      )
+
+      # Read a 100x100 slice from top-left
+      {:ok, tensor} = ExZarr.slice(array, {0..99, 0..99})
+      Nx.shape(tensor)  # {100, 100}
+
+      # Read single row
+      {:ok, row} = ExZarr.slice(array, {0..0, 0..999})
+      Nx.shape(row)  # {1, 1000}
+
+      # Read entire array
+      {:ok, full} = ExZarr.slice(array, {0..999, 0..999})
+
+  ## Returns
+
+  - `{:ok, tensor}` - Nx tensor containing the sliced data
+  - `{:error, reason}` - If the slice is invalid or read fails
+
+  ## Performance
+
+  Only chunks that overlap with the requested slice are read from storage.
+  For a 1000x1000 array with 100x100 chunks, reading a 100x100 slice
+  may only access 1-4 chunks instead of all 100 chunks.
+  """
+  @spec slice(Array.t(), tuple()) :: {:ok, Nx.Tensor.t()} | {:error, term()}
+  def slice(%Array{} = array, ranges) when is_tuple(ranges) do
+    # Convert ranges tuple to start/stop tuples
+    {start, stop} = ranges_to_start_stop(ranges)
+
+    # Read slice as binary
+    with {:ok, binary} <- Array.get_slice(array, start: start, stop: stop),
+         {:ok, nx_type} <- ExZarr.Nx.zarr_to_nx_type(array.metadata.dtype) do
+      # Calculate slice shape
+      slice_shape = calculate_slice_shape(start, stop)
+
+      # Convert binary to Nx tensor
+      tensor =
+        Nx.from_binary(binary, nx_type)
+        |> Nx.reshape(slice_shape)
+
+      {:ok, tensor}
+    end
+  end
+
+  # Convert ranges to start/stop tuples
+  defp ranges_to_start_stop(ranges) do
+    range_list = Tuple.to_list(ranges)
+
+    starts =
+      Enum.map(range_list, fn
+        first.._//_ -> first
+        single when is_integer(single) -> single
+      end)
+      |> List.to_tuple()
+
+    stops =
+      Enum.map(range_list, fn
+        _..last//_ -> last + 1
+        single when is_integer(single) -> single + 1
+      end)
+      |> List.to_tuple()
+
+    {starts, stops}
+  end
+
+  # Calculate shape of sliced region
+  defp calculate_slice_shape(start, stop) do
+    start_list = Tuple.to_list(start)
+    stop_list = Tuple.to_list(stop)
+
+    Enum.zip(start_list, stop_list)
+    |> Enum.map(fn {s, e} -> e - s end)
+    |> List.to_tuple()
+  end
 end

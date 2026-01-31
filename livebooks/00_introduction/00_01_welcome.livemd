@@ -1,6 +1,4 @@
-# Untitled notebook
-
-## Welcome to ExZarr
+# Welcome to ExZarr
 
 ```elixir
 Mix.install([
@@ -10,6 +8,8 @@ Mix.install([
   {:kino_vega_lite, "~> 0.1"}
 ])
 ```
+
+## Welcome to ExZarr
 
 ### Introduction
 
@@ -285,6 +285,8 @@ I/O reduction: 93%
 
 You can analyze datasets much larger than RAM by processing one slice at a time:
 
+<!-- livebook:{"force_markdown":true} -->
+
 ```elixir
 # Process a 100 GB array with 1 GB RAM by reading 1 GB slices
 for start <- 0..99 do
@@ -293,35 +295,51 @@ for start <- 0..99 do
 end
 ```
 
+<!-- livebook:{"break_markdown":true} -->
+
 #### Common Slicing Patterns
 
 **Pattern 1: Spatial Subset**
 
+Satellite image: extract region of interest:
+
+<!-- livebook:{"force_markdown":true} -->
+
 ```elixir
-# Satellite image: extract region of interest
 {:ok, city_region} = ExZarr.slice(array, {1000..2000, 3000..4000, 0..2})
 ```
 
 **Pattern 2: Time Series**
 
+Climate data: extract one year from multi-decade dataset
+
+<!-- livebook:{"force_markdown":true} -->
+
 ```elixir
-# Climate data: extract one year from multi-decade dataset
 {:ok, year_2023} = ExZarr.slice(array, {8760..17519, 0..179, 0..359})
 ```
 
 **Pattern 3: Single Sample**
 
+ML dataset: extract one training example
+
+<!-- livebook:{"force_markdown":true} -->
+
 ```elixir
-# ML dataset: extract one training example
 {:ok, sample_42} = ExZarr.slice(array, {42..42, 0..783})
 ```
 
 **Pattern 4: Strided Access**
 
+Every 10th frame from video data
+
+<!-- livebook:{"force_markdown":true} -->
+
 ```elixir
-# Every 10th frame from video data
 {:ok, keyframes} = ExZarr.slice(array, {0..9999//10, 0..1079, 0..1919, 0..2})
 ```
+
+<!-- livebook:{"break_markdown":true} -->
 
 Now let's see slicing in action with real code.
 
@@ -374,7 +392,7 @@ test_data =
 IO.puts("Data written successfully!")
 IO.puts("Tensor shape: #{inspect(Nx.shape(test_data))}")
 IO.puts("Sample values (first 5×5):")
-IO.inspect(test_data[0..4, 0..4])
+IO.inspect(test_data[[0..4, 0..4]])
 ```
 
 The data is now stored in the Zarr array, divided across 16 chunks. Each chunk is stored independently and can be accessed individually.
@@ -395,7 +413,7 @@ Now let's demonstrate selective access by reading only a small region:
 IO.puts("Slice shape: #{inspect(Nx.shape(small_slice))}")
 IO.puts("Expected shape: {100, 100}")
 IO.puts("\nFirst 5×5 elements of slice:")
-IO.inspect(small_slice[0..4, 0..4])
+IO.inspect(small_slice[[0..4, 0..4]])
 
 # Calculate what percentage of the array we read
 total_elements = 1000 * 1000
@@ -515,45 +533,18 @@ Kino.Markdown.new(comparison)
 
 Both formats work identically from the user's perspective. ExZarr handles the differences internally. When opening existing arrays, ExZarr automatically detects the version:
 
+<!-- livebook:{"force_markdown":true} -->
+
 ```elixir
-# Automatic version detection example (conceptual)
-version_detection = """
-## Automatic Version Detection
-
-When opening an existing Zarr array, ExZarr inspects the metadata files:
-
-**Zarr v2 Detection:**
-- Looks for `.zarray` file
-- Reads NumPy-style dtype strings
-- Parses dot-separated chunk keys
-
-**Zarr v3 Detection:**
-- Looks for `zarr.json` file
-- Reads node_type field
-- Uses hierarchical chunk keys with `c/` prefix
-
-**Usage:**
+{:ok, array} = ExZarr.open(path: "/data/mystery_array")
+IO.puts("Detected version: " <> "#{array.version}")
 ```
 
-{:ok, array} = ExZarr.open(path: "/data/mystery_array")
-IO.puts("Detected version: " <> "#{array.zarr_version}")
+Detected version: 2
+
+`:ok`
 
 ## No need to specify version—it's automatic!
-
-```
-
-**Result:**
-You write version-agnostic code. ExZarr handles format differences.
-"""
-
-Kino.Markdown.new(version_detection)
-```
-
-### Common Operations
-
-Let's look at typical operations you'll perform with ExZarr:
-
-<!-- livebook:{"break_markdown":true} -->
 
 #### Reading Different Slice Patterns
 
@@ -606,7 +597,6 @@ Let's see how compression affects storage:
     shape: {100, 100},
     chunks: {50, 50},
     dtype: :float64,
-    compressor: nil,
     storage: :memory
   )
 

@@ -239,6 +239,85 @@ defmodule ExZarr.Nx do
   end
 
   @doc """
+  Writes an Nx tensor to an existing ExZarr array.
+
+  This is a convenience function for writing tensor data to an already-created
+  Zarr array. The tensor shape must match the array shape.
+
+  ## Parameters
+
+  - `tensor` - Nx tensor to write
+  - `array` - ExZarr array to write to
+
+  ## Returns
+
+  - `:ok` - Successfully written
+  - `{:error, reason}` - Write failed
+
+  ## Examples
+
+      # Create array
+      {:ok, array} = ExZarr.create(
+        shape: {1000, 1000},
+        chunks: {100, 100},
+        dtype: :float64,
+        storage: :memory
+      )
+
+      # Generate tensor data
+      tensor = Nx.iota({1000, 1000}, type: {:f, 64})
+
+      # Write tensor to array
+      :ok = ExZarr.Nx.to_zarr(tensor, array)
+
+      # Verify by reading back
+      {:ok, read_tensor} = ExZarr.Nx.to_tensor(array)
+      Nx.equal(tensor, read_tensor) |> Nx.all() |> Nx.to_number()  # 1 (true)
+
+  ## Shape Validation
+
+  The tensor shape must exactly match the array shape:
+
+      {:ok, array} = ExZarr.create(shape: {100, 100}, chunks: {50, 50}, dtype: :int32)
+      tensor = Nx.iota({100, 100}, type: {:s, 32})
+      :ok = ExZarr.Nx.to_zarr(tensor, array)  # Success
+
+      bad_tensor = Nx.iota({50, 50}, type: {:s, 32})
+      ExZarr.Nx.to_zarr(bad_tensor, array)  # Error: shape mismatch
+
+  """
+  @spec to_zarr(Nx.Tensor.t(), ExZarr.Array.t()) :: :ok | {:error, term()}
+  def to_zarr(tensor, %Array{} = array) do
+    # Validate tensor shape matches array shape
+    tensor_shape = Nx.shape(tensor)
+    array_shape = array.metadata.shape
+
+    if tensor_shape != array_shape do
+      {:error,
+       "Shape mismatch: tensor has shape #{inspect(tensor_shape)}, " <>
+         "array has shape #{inspect(array_shape)}"}
+    else
+      # Validate tensor dtype is compatible with array dtype
+      with {:ok, expected_dtype} <- nx_to_zarr_type(Nx.type(tensor)) do
+        actual_dtype = array.metadata.dtype
+
+        if expected_dtype != actual_dtype do
+          {:error,
+           "Dtype mismatch: tensor has type #{inspect(Nx.type(tensor))} (zarr dtype #{inspect(expected_dtype)}), " <>
+             "array has dtype #{inspect(actual_dtype)}"}
+        else
+          # Convert tensor to binary
+          binary = Nx.to_binary(tensor)
+
+          # Write to entire array
+          start = tuple_of_zeros(array_shape)
+          Array.set_slice(array, binary, start: start, stop: array_shape)
+        end
+      end
+    end
+  end
+
+  @doc """
   Converts ExZarr array to stream of Nx tensors by processing in chunks.
 
   For large arrays that don't fit in memory, this function loads the array

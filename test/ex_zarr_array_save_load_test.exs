@@ -489,14 +489,14 @@ defmodule ExZarr.ArraySaveLoadTest do
           path: path
         )
 
-      # Path doesn't exist yet
-      refute File.exists?(path)
+      # Array.create already creates the directory via Storage.init
+      # This test verifies that save works with nested paths
+      assert File.dir?(path)
 
-      # Save should create it
+      # Save should work
       assert :ok = Array.save(array, path: path)
 
-      # Now it exists
-      assert File.dir?(path)
+      # Metadata file should exist
       assert File.exists?(Path.join(path, ".zarray"))
     end
 
@@ -538,6 +538,154 @@ defmodule ExZarr.ArraySaveLoadTest do
         other ->
           IO.puts("Unexpected result: #{inspect(other)}")
       end
+    end
+
+    test "create in memory, save to file, then reopen from file (v2)", %{test_dir: test_dir} do
+      path = Path.join(test_dir, "memory_to_file_v2")
+
+      # Step 1: Create array in memory
+      {:ok, mem_array} =
+        Array.create(
+          shape: {20, 20},
+          chunks: {10, 10},
+          dtype: :int32,
+          compressor: :zstd,
+          zarr_version: 2,
+          storage: :memory
+        )
+
+      # Verify it's in memory
+      assert mem_array.storage.backend == :memory
+
+      # Step 2: Write some data to memory array
+      data = for i <- 0..399, into: <<>>, do: <<i::signed-little-32>>
+      assert :ok = Array.set_slice(mem_array, data, start: {0, 0}, stop: {20, 20})
+
+      # Verify we can read from memory
+      {:ok, read_from_memory} = Array.get_slice(mem_array, start: {0, 0}, stop: {20, 20})
+      assert read_from_memory == data
+
+      # Step 3: Transfer from memory to filesystem
+      # Create filesystem array with same structure
+      {:ok, file_array} =
+        Array.create(
+          shape: mem_array.shape,
+          chunks: mem_array.chunks,
+          dtype: mem_array.dtype,
+          compressor: mem_array.compressor,
+          fill_value: mem_array.fill_value,
+          zarr_version: 2,
+          storage: :filesystem,
+          path: path
+        )
+
+      # Copy data from memory to filesystem
+      {:ok, mem_data} = Array.get_slice(mem_array, start: {0, 0}, stop: {20, 20})
+      assert :ok = Array.set_slice(file_array, mem_data, start: {0, 0}, stop: {20, 20})
+
+      # Save filesystem array metadata
+      assert :ok = Array.save(file_array, path: path)
+
+      # Verify files were created
+      assert File.exists?(path)
+      assert File.exists?(Path.join(path, ".zarray"))
+
+      # Verify chunks were written
+      chunk_files =
+        File.ls!(path)
+        |> Enum.reject(fn f -> String.starts_with?(f, ".") or String.contains?(f, ".lock") end)
+
+      assert length(chunk_files) == 4, "Should have 4 chunks (2x2 grid)"
+
+      # Step 4: Reopen from filesystem
+      {:ok, reopened} = Array.open(path: path)
+
+      # Verify it's now using filesystem storage
+      assert reopened.storage.backend == :filesystem
+      assert reopened.storage.state.path == path
+
+      # Verify structure matches
+      assert reopened.shape == {20, 20}
+      assert reopened.chunks == {10, 10}
+      assert reopened.dtype == :int32
+      assert reopened.compressor == :zstd
+
+      # Step 5: Verify data roundtrip
+      {:ok, read_from_file} = Array.get_slice(reopened, start: {0, 0}, stop: {20, 20})
+      assert read_from_file == data
+    end
+
+    test "create in memory, save to file, then reopen from file (v3)", %{test_dir: test_dir} do
+      path = Path.join(test_dir, "memory_to_file_v3")
+
+      # Step 1: Create array in memory
+      {:ok, mem_array} =
+        Array.create(
+          shape: {30, 30},
+          chunks: {10, 10},
+          dtype: :float64,
+          codecs: [%{name: "bytes"}, %{name: "zstd", configuration: %{level: 3}}],
+          zarr_version: 3,
+          storage: :memory
+        )
+
+      # Verify it's in memory
+      assert mem_array.storage.backend == :memory
+      assert mem_array.version == 3
+
+      # Step 2: Write some data to memory array
+      data = for i <- 0..899, into: <<>>, do: <<i * 1.0::float-little-64>>
+      assert :ok = Array.set_slice(mem_array, data, start: {0, 0}, stop: {30, 30})
+
+      # Verify we can read from memory
+      {:ok, read_from_memory} = Array.get_slice(mem_array, start: {0, 0}, stop: {30, 30})
+      assert read_from_memory == data
+
+      # Step 3: Transfer from memory to filesystem
+      # Create filesystem array with same structure
+      {:ok, file_array} =
+        Array.create(
+          shape: mem_array.shape,
+          chunks: mem_array.chunks,
+          dtype: mem_array.dtype,
+          codecs: mem_array.metadata.codecs,
+          fill_value: mem_array.fill_value,
+          zarr_version: 3,
+          storage: :filesystem,
+          path: path
+        )
+
+      # Copy data from memory to filesystem
+      {:ok, mem_data} = Array.get_slice(mem_array, start: {0, 0}, stop: {30, 30})
+      assert :ok = Array.set_slice(file_array, mem_data, start: {0, 0}, stop: {30, 30})
+
+      # Save filesystem array metadata
+      assert :ok = Array.save(file_array, path: path)
+
+      # Verify files were created
+      assert File.exists?(path)
+      assert File.exists?(Path.join(path, "zarr.json"))
+
+      # Verify v3 hierarchical structure
+      c_dir = Path.join(path, "c")
+      assert File.dir?(c_dir)
+
+      # Step 4: Reopen from filesystem
+      {:ok, reopened} = Array.open(path: path)
+
+      # Verify it's now using filesystem storage
+      assert reopened.storage.backend == :filesystem
+      assert reopened.storage.state.path == path
+      assert reopened.version == 3
+
+      # Verify structure matches
+      assert reopened.shape == {30, 30}
+      assert reopened.chunks == {10, 10}
+      assert reopened.dtype == :float64
+
+      # Step 5: Verify data roundtrip
+      {:ok, read_from_file} = Array.get_slice(reopened, start: {0, 0}, stop: {30, 30})
+      assert read_from_file == data
     end
   end
 
@@ -590,7 +738,7 @@ defmodule ExZarr.ArraySaveLoadTest do
         dtype: :int32,
         storage: :filesystem,
         path: path,
-        zarr_format: zarr_format
+        zarr_version: zarr_format
       ]
       |> maybe_add(:compressor, compressor)
       |> maybe_add(:codecs, codecs)
@@ -633,8 +781,9 @@ defmodule ExZarr.ArraySaveLoadTest do
 
   defp count_chunk_files(path, 2) do
     # v2: flat files like "0", "1", "2", etc.
+    # Exclude metadata files (start with ".") and lock files (contain ".lock")
     File.ls!(path)
-    |> Enum.reject(&String.starts_with?(&1, "."))
+    |> Enum.reject(fn f -> String.starts_with?(f, ".") or String.contains?(f, ".lock") end)
     |> length()
   end
 
@@ -657,14 +806,19 @@ defmodule ExZarr.ArraySaveLoadTest do
       if File.dir?(full_path) do
         acc + count_files_recursive(full_path)
       else
-        acc + 1
+        # Only count actual chunk files, not lock files
+        if String.contains?(entry, ".lock") do
+          acc
+        else
+          acc + 1
+        end
       end
     end)
   end
 
   defp verify_chunk_sizes(path, 2) do
     File.ls!(path)
-    |> Enum.reject(&String.starts_with?(&1, "."))
+    |> Enum.reject(fn f -> String.starts_with?(f, ".") or String.contains?(f, ".lock") end)
     |> Enum.each(fn chunk_file ->
       chunk_path = Path.join(path, chunk_file)
       stat = File.stat!(chunk_path)
@@ -685,8 +839,11 @@ defmodule ExZarr.ArraySaveLoadTest do
       if File.dir?(full_path) do
         verify_all_files_in_tree(full_path)
       else
-        stat = File.stat!(full_path)
-        assert stat.size > 0, "v3 chunk #{full_path} should have non-zero size"
+        # Skip lock files
+        unless String.contains?(entry, ".lock") do
+          stat = File.stat!(full_path)
+          assert stat.size > 0, "v3 chunk #{full_path} should have non-zero size"
+        end
       end
     end)
   end

@@ -229,6 +229,7 @@ defmodule ExZarr.Codecs.Registry do
       # Compression codecs
       none: :builtin_none,
       zlib: :builtin_zlib,
+      gzip: :builtin_zlib,  # gzip is an alias for zlib (compatible format)
       crc32c: :builtin_crc32c,
       zstd: :builtin_zstd,
       lz4: :builtin_lz4,
