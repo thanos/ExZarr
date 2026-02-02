@@ -8,7 +8,8 @@ defmodule ExZarr.Array do
   - Chunked storage for efficient I/O and memory usage
   - Compression using various codecs (zlib, zstd, lz4, or none)
   - Support for 10 data types (integers, unsigned integers, and floats)
-  - Persistent storage on filesystem or temporary in-memory storage
+  - Multiple storage backends (memory, filesystem, zip, S3, GCS, Azure)
+  - Storage migration between backends
   - Lazy loading of chunks (only reads what is needed)
 
   ## Array Structure
@@ -20,12 +21,36 @@ defmodule ExZarr.Array do
   - **Dtype**: The data type of elements (e.g., `:float64`, `:int32`)
   - **Compressor**: The compression codec used for chunks
   - **Fill value**: The default value for uninitialized elements
+  - **Storage**: The backend used for persistence (memory, filesystem, zip, etc.)
 
   ## Memory Efficiency
 
   Arrays use chunked storage to avoid loading entire arrays into memory.
   Only the chunks needed for a specific operation are loaded and decompressed.
   This allows working with arrays larger than available RAM.
+
+  ## Storage Migration
+
+  Arrays can be migrated between storage backends using `save/2`. This enables
+  workflows where arrays are created in memory for fast prototyping, then saved
+  to persistent storage when ready:
+
+      # Create array in memory
+      {:ok, array} = ExZarr.Array.create(
+        shape: {1000, 1000},
+        chunks: {100, 100},
+        dtype: :float64,
+        storage: :memory
+      )
+
+      # Work with array in memory...
+      ExZarr.Array.set_slice(array, data, start: {0, 0}, stop: {100, 100})
+
+      # Save to filesystem (automatic migration)
+      :ok = ExZarr.Array.save(array, path: "/tmp/my_array")
+
+      # Or save to zip
+      :ok = ExZarr.Array.save(array, path: "/tmp/my_array.zip")
 
   ## Examples
 
@@ -98,7 +123,8 @@ defmodule ExZarr.Array do
   Creates a new array with the specified configuration.
 
   Initializes a new Zarr array with the given shape, chunk size, data type,
-  and compression settings. The array can be stored in memory or on the filesystem.
+  and compression settings. Arrays can be created in different storage backends
+  and later migrated using `save/2`.
 
   ## Options
 
@@ -106,21 +132,31 @@ defmodule ExZarr.Array do
   - `:chunks` - Tuple specifying chunk dimensions (required)
   - `:dtype` - Data type (default: `:float64`)
   - `:compressor` - Compression codec (default: `:zstd`)
-  - `:storage` - Storage backend (default: `:memory`)
-  - `:path` - Path for filesystem storage
+  - `:storage` - Storage backend: `:memory`, `:filesystem`, `:zip`, `:s3`, `:gcs`, `:azure` (default: `:memory`)
+  - `:path` - Path for persistent storage (required for `:filesystem`, `:zip`)
   - `:fill_value` - Fill value for uninitialized chunks (default: `0`)
+  - `:zarr_version` - Zarr format version: `2` or `3` (default: `2`)
   - `:enable_server` - Start ArrayServer for coordinated access (default: `false`)
   - `:enable_cache` - Enable chunk caching (default: `false`)
 
+  ## Storage Backends
+
+  - **`:memory`** - Fast, temporary storage. Data lost when process terminates.
+  - **`:filesystem`** - Persistent directory-based storage. Compatible with zarr-python.
+  - **`:zip`** - Single-file archive storage. Convenient for distribution.
+  - **`:s3`** - Amazon S3 object storage. Requires credentials.
+  - **`:gcs`** - Google Cloud Storage. Requires credentials.
+  - **`:azure`** - Azure Blob Storage. Requires credentials.
+
   ## Examples
 
-      # Simple 1D array
+      # Simple 1D array in memory (default)
       {:ok, array} = ExZarr.Array.create(
         shape: {1000},
         chunks: {100}
       )
 
-      # 2D array with specific dtype
+      # 2D array with specific dtype and compression
       {:ok, array} = ExZarr.Array.create(
         shape: {500, 500},
         chunks: {50, 50},
@@ -135,6 +171,19 @@ defmodule ExZarr.Array do
         storage: :filesystem,
         path: "/tmp/my_array"
       )
+
+      # Array in zip file
+      {:ok, array} = ExZarr.Array.create(
+        shape: {1000, 1000},
+        chunks: {100, 100},
+        storage: :zip,
+        path: "/tmp/my_array.zip"
+      )
+
+      # Create in memory, then migrate to filesystem
+      {:ok, array} = ExZarr.Array.create(shape: {1000, 1000}, chunks: {100, 100})
+      # ... work with array in memory ...
+      :ok = ExZarr.Array.save(array, path: "/tmp/my_array")
 
   ## Returns
 
@@ -284,28 +333,86 @@ defmodule ExZarr.Array do
   Saves the array to storage.
 
   Writes the array configuration and all chunks to the specified location.
-  Can migrate arrays between storage backends (e.g., memory to filesystem).
+  Supports migrating arrays between storage backends (e.g., memory to filesystem).
+  When a path is provided and differs from the current storage, all chunks are
+  automatically copied to the new location.
+
+  ## Storage Migration
+
+  This function intelligently handles storage migration:
+
+  1. If no path is provided, saves to the current storage backend
+  2. If path matches current storage, only updates metadata
+  3. If path differs, migrates all chunks to the new storage backend
+  4. Target storage type is inferred from path extension or explicit `:storage` option
 
   ## Options
 
-  - `:path` - Path where array should be saved (creates filesystem storage)
-  - `:storage` - Target storage backend (`:filesystem`, `:zip`, etc.)
+  - `:path` - Path where array should be saved. Required for migration.
+  - `:storage` - Explicit target storage backend (`:filesystem`, `:zip`, etc.)
+                 If not specified, inferred from path:
+                 - `.zip` extension → `:zip` storage
+                 - Directory path → `:filesystem` storage
+
+  ## Migration Behavior
+
+  **No Migration** (fast, metadata-only):
+  - `save(array)` - Save to current storage
+  - `save(array, path: current_path)` - Same backend and path
+
+  **With Migration** (copies all chunks):
+  - Memory to filesystem: `save(array, path: "/tmp/array")`
+  - Memory to zip: `save(array, path: "/tmp/array.zip")`
+  - Filesystem to zip: `save(fs_array, path: "/tmp/array.zip")`
+  - Zip to filesystem: `save(zip_array, path: "/tmp/array")`
 
   ## Examples
 
-      # Save memory array to filesystem
-      {:ok, array} = ExZarr.Array.create(shape: {1000}, chunks: {100}, storage: :memory)
-      ExZarr.Array.set_slice(array, data, start: {0}, stop: {100})
+      # Create array in memory for fast prototyping
+      {:ok, array} = ExZarr.Array.create(
+        shape: {1000, 1000},
+        chunks: {100, 100},
+        storage: :memory
+      )
+
+      # Write data
+      ExZarr.Array.set_slice(array, data, start: {0, 0}, stop: {100, 100})
+
+      # Migrate to filesystem (automatic detection)
       :ok = ExZarr.Array.save(array, path: "/tmp/my_array")
 
-      # Save to existing storage
-      {:ok, array} = ExZarr.Array.create(shape: {1000}, chunks: {100}, path: "/tmp/array")
-      :ok = ExZarr.Array.save(array)
+      # Migrate to zip archive
+      :ok = ExZarr.Array.save(array, path: "/tmp/my_array.zip")
+
+      # Explicit storage type
+      :ok = ExZarr.Array.save(array, path: "/tmp/data", storage: :zip)
+
+      # Save filesystem array to same location (no migration)
+      {:ok, fs_array} = ExZarr.Array.create(
+        shape: {1000, 1000},
+        chunks: {100, 100},
+        path: "/tmp/my_array",
+        storage: :filesystem
+      )
+      :ok = ExZarr.Array.save(fs_array, path: "/tmp/my_array")  # Fast metadata update
+
+      # Save without path option (uses current storage)
+      :ok = ExZarr.Array.save(fs_array)
+
+  ## Performance
+
+  - **Metadata-only save** (same storage): ~1ms
+  - **Migration save** (different storage): Time proportional to number of chunks
 
   ## Returns
 
   - `:ok` on success
-  - `{:error, reason}` on failure
+  - `{:error, reason}` on failure (e.g., permission denied, invalid path)
+
+  ## See Also
+
+  - `create/1` - Create arrays in different storage backends
+  - `open/1` - Open existing arrays from persistent storage
   """
   @spec save(t(), keyword()) :: :ok | {:error, term()}
   def save(array, opts \\ []) do
@@ -315,26 +422,41 @@ defmodule ExZarr.Array do
         Storage.write_metadata(array.storage, array.metadata, opts)
 
       path when is_binary(path) ->
-        # Path provided, migrate to filesystem storage
-        migrate_to_filesystem(array, path, opts)
+        # Path provided, detect target storage and migrate if needed
+        target_storage_type = detect_storage_type(path, opts)
+        migrate_storage(array, target_storage_type, path, opts)
     end
   end
 
-  # Migrates an array from any storage backend to filesystem
-  defp migrate_to_filesystem(array, path, opts) do
-    # Check if we're already using filesystem storage at the same path
-    if array.storage.backend == :filesystem and array.storage.path == path do
+  # Detects storage type from path or explicit option
+  defp detect_storage_type(path, opts) do
+    case Keyword.get(opts, :storage) do
+      nil ->
+        # Infer from path extension
+        if String.ends_with?(path, ".zip") do
+          :zip
+        else
+          :filesystem
+        end
+
+      storage_type when is_atom(storage_type) ->
+        storage_type
+    end
+  end
+
+  # Migrates an array to a different storage backend
+  defp migrate_storage(array, target_storage_type, path, opts) do
+    # Check if we're already using the same storage type and path
+    if array.storage.backend == target_storage_type and array.storage.path == path do
       # Just write metadata to existing location
       Storage.write_metadata(array.storage, array.metadata, opts)
     else
-      # Create new filesystem storage
+      # Create new storage backend
       with {:ok, target_storage} <-
-             Storage.init(%{storage_type: :filesystem, path: path}),
+             Storage.init(%{storage_type: target_storage_type, path: path}),
            # Copy all chunks from source to target
-           :ok <- copy_all_chunks(array.storage, target_storage),
-           # Write metadata to target
-           :ok <- Storage.write_metadata(target_storage, array.metadata, opts) do
-        :ok
+           :ok <- copy_all_chunks(array.storage, target_storage) do
+        Storage.write_metadata(target_storage, array.metadata, opts)
       end
     end
   end
