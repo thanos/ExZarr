@@ -281,30 +281,89 @@ defmodule ExZarr.Array do
   end
 
   @doc """
-  Saves the array metadata to storage.
+  Saves the array to storage.
 
-  Writes the array configuration to a `.zarray` file in the storage location.
-  This persists the array structure, allowing it to be reopened later.
-  Note that chunk data is written separately when chunks are modified.
+  Writes the array configuration and all chunks to the specified location.
+  Can migrate arrays between storage backends (e.g., memory to filesystem).
 
   ## Options
 
-  - `:path` - Path where metadata should be written (for new filesystem storage)
+  - `:path` - Path where array should be saved (creates filesystem storage)
+  - `:storage` - Target storage backend (`:filesystem`, `:zip`, etc.)
 
   ## Examples
 
-      {:ok, array} = ExZarr.Array.create(shape: {1000}, chunks: {100})
+      # Save memory array to filesystem
+      {:ok, array} = ExZarr.Array.create(shape: {1000}, chunks: {100}, storage: :memory)
+      ExZarr.Array.set_slice(array, data, start: {0}, stop: {100})
       :ok = ExZarr.Array.save(array, path: "/tmp/my_array")
+
+      # Save to existing storage
+      {:ok, array} = ExZarr.Array.create(shape: {1000}, chunks: {100}, path: "/tmp/array")
+      :ok = ExZarr.Array.save(array)
 
   ## Returns
 
   - `:ok` on success
-  - `{:ok, storage}` for in-memory storage (returns updated storage)
   - `{:error, reason}` on failure
   """
   @spec save(t(), keyword()) :: :ok | {:error, term()}
-  def save(array, opts) do
-    Storage.write_metadata(array.storage, array.metadata, opts)
+  def save(array, opts \\ []) do
+    case Keyword.get(opts, :path) do
+      nil ->
+        # No path provided, save to current storage
+        Storage.write_metadata(array.storage, array.metadata, opts)
+
+      path when is_binary(path) ->
+        # Path provided, migrate to filesystem storage
+        migrate_to_filesystem(array, path, opts)
+    end
+  end
+
+  # Migrates an array from any storage backend to filesystem
+  defp migrate_to_filesystem(array, path, opts) do
+    # Check if we're already using filesystem storage at the same path
+    if array.storage.backend == :filesystem and array.storage.path == path do
+      # Just write metadata to existing location
+      Storage.write_metadata(array.storage, array.metadata, opts)
+    else
+      # Create new filesystem storage
+      with {:ok, target_storage} <-
+             Storage.init(%{storage_type: :filesystem, path: path}),
+           # Copy all chunks from source to target
+           :ok <- copy_all_chunks(array.storage, target_storage),
+           # Write metadata to target
+           :ok <- Storage.write_metadata(target_storage, array.metadata, opts) do
+        :ok
+      end
+    end
+  end
+
+  # Copies all chunks from source storage to target storage
+  defp copy_all_chunks(source_storage, target_storage) do
+    case Storage.list_chunks(source_storage) do
+      {:ok, chunk_indices} ->
+        # Copy each chunk
+        Enum.reduce_while(chunk_indices, :ok, fn chunk_index, :ok ->
+          case Storage.read_chunk(source_storage, chunk_index) do
+            {:ok, chunk_data} ->
+              case Storage.write_chunk(target_storage, chunk_index, chunk_data) do
+                :ok -> {:cont, :ok}
+                {:error, reason} -> {:halt, {:error, {:chunk_write_failed, chunk_index, reason}}}
+              end
+
+            {:error, :not_found} ->
+              # Skip missing chunks
+              {:cont, :ok}
+
+            {:error, reason} ->
+              {:halt, {:error, {:chunk_read_failed, chunk_index, reason}}}
+          end
+        end)
+
+      {:error, reason} ->
+        {:error, {:list_chunks_failed, reason}}
+    end
   end
 
   # Parse slice options - supports both numeric (:start, :stop, :step), maps, and named dimensions

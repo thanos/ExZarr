@@ -239,14 +239,15 @@ array_path = Path.join(base_dir, "array_2d")
 
 # Clean up any previous array
 File.rm_rf!(array_path)
-File.mkdir_p!(array_path)
 
-# Save array to disk
+# Save array to disk (migrates from memory to filesystem)
 :ok = Array.save(array, path: array_path)
 
 IO.puts("Array saved to: #{array_path}")
 
 ```
+
+**What just happened:** The memory array was migrated to filesystem storage. All chunks were copied from memory to disk, and metadata was written. The original memory array remains unchanged.
 
 **What got saved:**
 

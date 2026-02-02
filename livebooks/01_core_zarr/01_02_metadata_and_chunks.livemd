@@ -1,0 +1,421 @@
+# Metadata and Chunks: Inside a Zarr Array
+
+```elixir
+Mix.install([
+  {:ex_zarr, path: Path.join(__DIR__, "../..")},
+  {:kino, "~> 0.13"},
+  {:jason, "~> 1.4"}
+])
+```
+
+## Introduction
+
+A Zarr array is more than just data — it's metadata describing structure, plus chunks storing values. This livebook explores what gets stored, how chunk shapes affect performance, and the differences between Zarr v2 and v3 metadata formats.
+
+**What you'll learn:**
+
+* The role of `.zarray` (v2) and `zarr.json` (v3) metadata files
+* Custom attributes via `.zattrs`
+* How chunk shape impacts I/O efficiency
+* Visual mental models for chunk grids
+* Reading and inspecting metadata programmatically
+
+**Core principle:** Metadata is the contract. Chunks are the payload. Any language or tool can read a Zarr array if it understands the metadata format.
+
+## Setup
+
+```elixir
+alias ExZarr.Array
+alias ExZarr.Gallery.{Pack, SampleData}
+```
+
+## The Metadata + Chunks Model
+
+```mermaid
+graph TD
+    A[Zarr Array Directory] --> B[Metadata Files]
+    A --> C[Chunk Files]
+
+    B --> D[".zarray or zarr.json<br/>Structure description"]
+    B --> E[".zattrs<br/>Custom attributes"]
+
+    C --> F["Chunk 0.0<br/>Binary data"]
+    C --> G["Chunk 0.1<br/>Binary data"]
+    C --> H["Chunk 1.0<br/>Binary data"]
+    C --> I["... more chunks ..."]
+
+    style A fill:#e1f5ff
+    style B fill:#fff9c4
+    style C fill:#c8e6c9
+```
+
+When you create or open an array, ExZarr reads the metadata to understand shape, chunks, dtype, and compression. When you read a slice, it loads the necessary chunk files.
+
+## Step 1: Create Arrays in Both Formats
+
+Let's create one array in Zarr v2 format and one in v3 format, then inspect their metadata.
+
+```elixir
+# Zarr v2 array
+{:ok, array_v2} =
+  Array.create(
+    shape: {500, 400},
+    chunks: {100, 80},
+    dtype: :float32,
+    compressor: :zstd,
+    fill_value: 0.0,
+    zarr_format: 2,
+    storage: :memory
+  )
+
+# Zarr v3 array
+{:ok, array_v3} =
+  Array.create(
+    shape: {500, 400},
+    chunks: {100, 80},
+    dtype: :float32,
+    compressor: :zstd,
+    fill_value: 0.0,
+    zarr_format: 3,
+    storage: :memory
+  )
+
+IO.puts("Created both v2 and v3 arrays with identical logical structure")
+:ok
+```
+
+**Same logical structure, different metadata formats.** Both arrays have shape 500×400, chunked as 100×80, storing 32-bit floats. The difference is how this information is stored in metadata files.
+
+## Step 2: Save to Disk for Inspection
+
+Let's persist both arrays so we can inspect their metadata files.
+
+```elixir
+base_dir = Path.join(System.tmp_dir!(), "exzarr_metadata_demo")
+v2_path = Path.join(base_dir, "array_v2")
+v3_path = Path.join(base_dir, "array_v3")
+
+# Clean and create
+File.rm_rf!(base_dir)
+File.mkdir_p!(v2_path)
+File.mkdir_p!(v3_path)
+
+# Save arrays
+Array.save(array_v2, path: v2_path)
+Array.save(array_v3, path: v3_path)
+
+IO.puts("Arrays saved:")
+IO.puts("  v2: #{v2_path}")
+IO.puts("  v3: #{v3_path}")
+```
+
+**What got written:** For v2, a `.zarray` file. For v3, a `zarr.json` file. Both describe the same logical structure but use different JSON schemas.
+
+## Step 3: Inspect v2 Metadata (.zarray)
+
+```elixir
+v2_metadata_path = Path.join(v2_path, ".zarray")
+v2_metadata_json = File.read!(v2_metadata_path)
+v2_metadata = Jason.decode!(v2_metadata_json)
+
+IO.puts("Zarr v2 .zarray contents:")
+IO.puts(Jason.encode!(v2_metadata, pretty: true))
+```
+
+**v2 format fields:**
+
+* `zarr_format`: Version identifier (2)
+* `shape`: Array dimensions
+* `chunks`: Chunk dimensions
+* `dtype`: Data type (NumPy-style string like "<f4")
+* `compressor`: Compression configuration (nested object)
+* `fill_value`: Default value for uninitialized regions
+* `order`: Memory layout (C or F)
+* `filters`: Optional pre-compression transformations
+
+## Step 4: Inspect v3 Metadata (zarr.json)
+
+```elixir
+v3_metadata_path = Path.join(v3_path, "zarr.json")
+v3_metadata_json = File.read!(v3_metadata_path)
+v3_metadata = Jason.decode!(v3_metadata_json)
+
+IO.puts("Zarr v3 zarr.json contents:")
+IO.puts(Jason.encode!(v3_metadata, pretty: true))
+```
+
+**v3 format differences:**
+
+* `zarr_format`: Version 3
+* `node_type`: "array" (distinguishes arrays from groups)
+* `shape`: Same as v2
+* `chunk_grid`: Nested structure describing chunking
+* `data_type`: More structured than v2's dtype string
+* `codecs`: Array of codec specifications (replaces compressor + filters)
+* `fill_value`: Same concept
+* `chunk_key_encoding`: How chunk filenames are generated
+
+**Key improvement in v3:** Codecs are explicit pipelines, not implicit compressor/filters. This makes transformations more composable and transparent.
+
+## Step 5: Visualizing Chunk Grids
+
+Our 500×400 array with 100×80 chunks has a 5×5 chunk grid:
+
+```mermaid
+graph TD
+    A["Array: 500×400"] --> B["Chunk Grid: 5×5<br/>25 chunks total"]
+
+    B --> C0["Chunk 0,0<br/>rows 0-99<br/>cols 0-79"]
+    B --> C1["Chunk 0,1<br/>rows 0-99<br/>cols 80-159"]
+    B --> C2["Chunk 0,2<br/>rows 0-99<br/>cols 160-239"]
+    B --> C3["..."]
+    B --> C4["Chunk 4,4<br/>rows 400-499<br/>cols 320-399"]
+
+    style A fill:#e1f5ff
+    style B fill:#f3e5f5
+    style C0 fill:#c8e6c9
+    style C1 fill:#c8e6c9
+    style C2 fill:#c8e6c9
+    style C4 fill:#c8e6c9
+```
+
+**Chunk calculation:**
+
+* Rows: 500 ÷ 100 = 5 chunks
+* Cols: 400 ÷ 80 = 5 chunks
+* Total chunks: 5 × 5 = 25
+
+Each chunk stores 100 × 80 = 8,000 float32 values = 32,000 bytes uncompressed.
+
+## Step 6: Write Data and Observe Chunk Files
+
+Let's write a 150×150 region and see which chunk files get created.
+
+```elixir
+# Generate 150×150 matrix
+data = SampleData.matrix(150, 150)
+binary = Pack.pack(data, :float32)
+
+# Write to v2 array
+Array.set_slice(array_v2, binary, start: {0, 0}, stop: {150, 150})
+Array.save(array_v2, path: v2_path)
+
+# List chunk files
+v2_files = File.ls!(v2_path) |> Enum.sort()
+IO.puts("v2 array files:")
+Enum.each(v2_files, fn f -> IO.puts("  #{f}") end)
+```
+
+**Expected chunk files:** Writing a 150×150 region starting at (0,0) spans:
+
+* Rows 0-149: Chunks 0, 1 (100 rows each, so 0-99 and 100-149)
+* Cols 0-149: Chunks 0, 1 (80 cols each, so 0-79 and 80-149)
+* Total chunks touched: 2×2 = 4 chunks
+
+**v2 chunk naming:** Chunks are named like `0.0`, `0.1`, `1.0`, `1.1` (dot-separated indices).
+
+```elixir
+# Do the same for v3
+Array.set_slice(array_v3, binary, start: {0, 0}, stop: {150, 150})
+Array.save(array_v3, path: v3_path)
+
+v3_files = File.ls!(v3_path) |> Enum.sort()
+IO.puts("\nv3 array files:")
+Enum.each(v3_files, fn f -> IO.puts("  #{f}") end)
+```
+
+**v3 chunk naming:** Chunks are in subdirectories like `c/0/0`, `c/0/1`, `c/1/0`, `c/1/1` (hierarchical structure). The `c/` prefix indicates these are chunk files.
+
+## Chunk Naming Comparison
+
+```mermaid
+graph LR
+    A[Chunk 0,1] --> B["v2: 0.1<br/>flat file"]
+    A --> C["v3: c/0/1<br/>hierarchical"]
+
+    style A fill:#e1f5ff
+    style B fill:#fff9c4
+    style C fill:#c8e6c9
+```
+
+**Why hierarchical in v3?** Flat directories don't scale well. An array with millions of chunks can overwhelm filesystems. Hierarchical structure distributes chunks across subdirectories, improving performance on cloud storage and large-scale systems.
+
+## Step 7: Custom Attributes (.zattrs)
+
+You can attach arbitrary metadata to arrays using attributes. This is useful for:
+
+* Units of measurement (e.g., "temperature in Kelvin")
+* Coordinate information (latitude/longitude ranges)
+* Provenance (who created it, when, from what source)
+* Custom application metadata
+
+```elixir
+{:ok, array_with_attrs} =
+  Array.create(
+    shape: {100, 100},
+    chunks: {50, 50},
+    dtype: :int16,
+    storage: :memory,
+    attrs: %{
+      "units" => "meters",
+      "description" => "Elevation data for region XYZ",
+      "created_at" => "2026-01-30T12:00:00Z",
+      "source" => "synthetic"
+    }
+  )
+
+# Save and inspect
+attrs_path = Path.join(base_dir, "array_with_attrs")
+File.rm_rf!(attrs_path)
+File.mkdir_p!(attrs_path)
+Array.save(array_with_attrs, path: attrs_path)
+
+# Read .zattrs file
+zattrs_path = Path.join(attrs_path, ".zattrs")
+
+if File.exists?(zattrs_path) do
+  attrs_json = File.read!(zattrs_path)
+  IO.puts("Custom attributes (.zattrs):")
+  IO.puts(attrs_json)
+else
+  IO.puts("No .zattrs file (attributes may be inline in zarr.json for v3)")
+end
+```
+
+**v2 vs v3 attributes:**
+
+* **v2:** Attributes are stored in a separate `.zattrs` JSON file
+* **v3:** Attributes can be inline in `zarr.json` under the `attributes` key, or in a separate file
+
+**Best practice:** Use attributes for domain-specific metadata. Keep `.zarray`/`zarr.json` for structural metadata only.
+
+## Step 8: Chunk Shape Impact on Performance
+
+Chunk shape directly affects I/O efficiency. Let's explore three scenarios:
+
+**Scenario A: Square chunks (100×100)**
+
+* Good for: Balanced row/column access, spatial queries
+* 10,000 elements × 4 bytes = 40 KB per chunk
+
+**Scenario B: Wide chunks (50×200)**
+
+* Good for: Row-wise scans (reading entire rows)
+* Same 10,000 elements, but different access patterns
+
+**Scenario C: Tall chunks (200×50)**
+
+* Good for: Column-wise scans (reading entire columns)
+* Same 10,000 elements, optimized for columnar access
+
+```mermaid
+graph TD
+    A[Array: 1000×1000] --> B["Square: 100×100<br/>100 chunks<br/>Balanced access"]
+    A --> C["Wide: 50×200<br/>100 chunks<br/>Optimized for rows"]
+    A --> D["Tall: 200×50<br/>100 chunks<br/>Optimized for columns"]
+
+    style A fill:#e1f5ff
+    style B fill:#c8e6c9
+    style C fill:#fff9c4
+    style D fill:#f3e5f5
+```
+
+```elixir
+# Create three arrays with different chunk shapes
+{:ok, square_chunks} =
+  Array.create(
+    shape: {1000, 1000},
+    chunks: {100, 100},
+    dtype: :int32,
+    storage: :memory
+  )
+
+{:ok, wide_chunks} =
+  Array.create(
+    shape: {1000, 1000},
+    chunks: {50, 200},
+    dtype: :int32,
+    storage: :memory
+  )
+
+{:ok, tall_chunks} =
+  Array.create(
+    shape: {1000, 1000},
+    chunks: {200, 50},
+    dtype: :int32,
+    storage: :memory
+  )
+
+IO.puts("Created three arrays with different chunk shapes")
+IO.puts("Square: #{inspect(square_chunks.chunks)}")
+IO.puts("Wide: #{inspect(wide_chunks.chunks)}")
+IO.puts("Tall: #{inspect(tall_chunks.chunks)}")
+```
+
+**When to use each:**
+
+* **Square chunks:** General-purpose, good for 2D spatial data
+* **Wide chunks:** Time series with many columns, row-oriented analytics
+* **Tall chunks:** Column stores, aggregations over specific fields
+
+## Step 9: Metadata Inspection via ExZarr API
+
+Instead of reading files directly, you can access metadata through the ExZarr API:
+
+```elixir
+metadata_v2 = Array.metadata(array_v2)
+metadata_v3 = Array.metadata(array_v3)
+
+IO.puts("v2 metadata struct:")
+IO.inspect(metadata_v2, limit: :infinity)
+
+IO.puts("\nv3 metadata struct:")
+IO.inspect(metadata_v3, limit: :infinity)
+```
+
+**Metadata fields available:**
+
+* `shape`: Tuple of dimensions
+* `chunks`: Tuple of chunk dimensions
+* `dtype`: Atom like `:float32`, `:int64`
+* `compressor`: Atom like `:zstd`, `:gzip`
+* `fill_value`: Default value
+* `zarr_format`: Integer (2 or 3)
+
+**Use this API when:** You need to inspect arrays programmatically, validate structure, or build tools that work with both v2 and v3.
+
+## Why This Matters
+
+**Interoperability:**
+Zarr's power comes from standardized metadata. Python zarr-python, Julia Zarr.jl, JavaScript zarr.js, and ExZarr all read the same metadata format. Write once, read anywhere.
+
+**Performance tuning:**
+Chunk shape is the primary knob for I/O optimization. Understanding metadata helps you design arrays for your access patterns.
+
+**Version migration:**
+Knowing the differences between v2 and v3 helps you choose the right format and migrate existing arrays when needed.
+
+**Debugging:**
+When something goes wrong, inspecting metadata files directly reveals mismatches in structure, compression, or chunk naming.
+
+## Key Takeaways
+
+1. **Metadata describes structure** — shape, chunks, dtype, compression
+2. **v2 uses `.zarray`** — flat JSON file with simple schema
+3. **v3 uses `zarr.json`** — structured schema with explicit codec pipelines
+4. **Chunk naming differs** — v2 is flat (0.0), v3 is hierarchical (c/0/0)
+5. **Attributes add custom metadata** — `.zattrs` for domain-specific information
+6. **Chunk shape impacts performance** — optimize for your access patterns
+7. **ExZarr API abstracts differences** — works with both v2 and v3 transparently
+
+## What's Next
+
+**Continue in Core Zarr Concepts:**
+
+* `01_03_chunk_streaming.livemd` - Sequential vs parallel chunk streaming
+* `01_04_codecs_and_pipelines.livemd` - Zarr v2 compressors vs v3 codec pipelines
+
+**Explore advanced topics:**
+
+* `02_concurrency/02_04_chunk_shape_laboratory.livemd` - Empirical chunk sizing experiments
+* `09_systems/09_05_zarr_v3_migration.livemd` - v2 to v3 migration strategies
