@@ -10,9 +10,14 @@ defmodule ExZarr.Codecs.CompressionConfig do
   You can override the automatic detection by setting these environment variables:
 
   - `COMPRESSION_LIB_DIRS` - Colon-separated list of library directories
+  - `COMPRESSION_INCLUDE_DIRS` - Colon-separated list of include directories
   - `HOMEBREW_PREFIX` - Override Homebrew installation path (macOS only)
 
   ## Examples
+
+      # Get include directories for compilation
+      ExZarr.Codecs.CompressionConfig.include_dirs()
+      # => ["/opt/homebrew/opt/zstd/include", "/opt/homebrew/opt/lz4/include", ...]
 
       # Get library directories for linking
       ExZarr.Codecs.CompressionConfig.library_dirs()
@@ -57,6 +62,18 @@ defmodule ExZarr.Codecs.CompressionConfig do
   def rpath_dirs do
     case System.get_env("COMPRESSION_LIB_DIRS") do
       nil -> detect_rpath_dirs()
+      paths -> String.split(paths, ":")
+    end
+  end
+
+  @doc """
+  Returns the list of include directories to use for compilation.
+
+  This is used by the Zig NIF compiler to find compression library headers.
+  """
+  def include_dirs do
+    case System.get_env("COMPRESSION_INCLUDE_DIRS") do
+      nil -> detect_include_dirs()
       paths -> String.split(paths, ":")
     end
   end
@@ -157,9 +174,35 @@ defmodule ExZarr.Codecs.CompressionConfig do
     _ -> "/opt/homebrew"
   end
 
+  defp detect_include_dirs do
+    case :os.type() do
+      {:unix, :darwin} ->
+        # macOS - use Homebrew
+        prefix = detect_homebrew_prefix()
+        build_include_paths(prefix)
+
+      {:unix, _} ->
+        # Linux - use standard system paths
+        [
+          "/usr/include",
+          "/usr/local/include"
+        ]
+        |> Enum.filter(&File.dir?/1)
+
+      _ ->
+        []
+    end
+  end
+
   defp build_lib_paths(prefix) do
     Enum.map(@compression_libs, fn lib ->
       "#{prefix}/opt/#{lib}/lib"
+    end)
+  end
+
+  defp build_include_paths(prefix) do
+    Enum.map(@compression_libs, fn lib ->
+      "#{prefix}/opt/#{lib}/include"
     end)
   end
 end

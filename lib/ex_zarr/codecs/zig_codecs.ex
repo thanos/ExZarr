@@ -62,9 +62,16 @@ defmodule ExZarr.Codecs.ZigCodecs do
                    _ -> []
                  end)
 
+  # Get include paths from configuration
+  @include_dirs (case :os.type() do
+                   {:unix, :darwin} -> CompressionConfig.include_dirs()
+                   _ -> []
+                 end)
+
   use Zig,
     otp_app: :ex_zarr,
     c: [
+      include_dirs: @include_dirs,
       library_dirs: @library_dirs,
       link_lib: [
         {:system, "zstd"},
