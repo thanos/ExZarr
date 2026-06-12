@@ -189,6 +189,7 @@ defmodule ExZarr.MixProject do
         # Additional Documentation
         "CHANGELOG.md",
         "INTEROPERABILITY.md",
+        "LICENSE",
         "PERFORMANCE_IMPROVEMENTS.md",
         "SECURITY.md",
         "docs/V2_TO_V3_MIGRATION.md",
@@ -243,6 +244,7 @@ defmodule ExZarr.MixProject do
         "Additional Documentation": [
           "CHANGELOG.md",
           "INTEROPERABILITY.md",
+          "LICENSE",
           "PERFORMANCE_IMPROVEMENTS.md",
           "SECURITY.md",
           "docs/V2_TO_V3_MIGRATION.md",

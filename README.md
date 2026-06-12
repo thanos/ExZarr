@@ -3,7 +3,7 @@
 
 [![Hex version](https://img.shields.io/hexpm/v/ex_zarr.svg)](https://hex.pm/packages/ex_zarr)
 [![Hex docs](https://img.shields.io/badge/docs-hexdocs.pm-blue)](https://hexdocs.pm/ex_zarr)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/thanos/ExZarr/blob/main/LICENSE)
 [![CI](https://github.com/thanos/ex_zarr/actions/workflows/ci.yml/badge.svg)](https://github.com/thanos/ex_zarr/actions/workflows/ci.yml) 
 [![Coverage Status](https://coveralls.io/repos/github/thanos/ExZarr/badge.svg?branch=main)](https://coveralls.io/github/thanos/ExZarr?branch=main)
 
