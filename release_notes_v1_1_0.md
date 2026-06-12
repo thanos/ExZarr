@@ -2,8 +2,8 @@
 
 ## BEAM-Native Streaming and Concurrent Zarr Processing
 
-ExZarr v1.1.0 establishes first-class streaming APIs for reading and writing
-large Zarr arrays with controlled concurrency, backpressure, and observability.
+ExZarr v1.1.0 adds streaming APIs for reading and writing large Zarr arrays
+with controlled concurrency, backpressure, and observability.
 
 ## Highlights
 
@@ -26,8 +26,11 @@ large Zarr arrays with controlled concurrency, backpressure, and observability.
 
 ### Telemetry
 
-- `[:ex_zarr, :chunk, :read]`
-- `[:ex_zarr, :chunk, :write]`
+Chunk read/write events use `:telemetry.span/3` and emit `:start`, `:stop`, and
+`:exception` suffixes. Attach to the `:stop` events for measurements:
+
+- `[:ex_zarr, :chunk, :read, :stop]`
+- `[:ex_zarr, :chunk, :write, :stop]`
 - `[:ex_zarr, :stream, :start]`
 - `[:ex_zarr, :stream, :stop]`
 

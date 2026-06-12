@@ -4,6 +4,7 @@
   {"lib/ex_zarr/array.ex", :contract_supertype},
   {"lib/ex_zarr/codecs.ex", :contract_supertype},
   {"lib/ex_zarr/storage/backend/ets.ex", :contract_supertype},
+  {"lib/ex_zarr/telemetry.ex", :contract_supertype},
 
   # Pattern match and coverage warnings - false positives from conditional compilation
   {"lib/ex_zarr/codecs.ex", :pattern_match},

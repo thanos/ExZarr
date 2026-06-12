@@ -33,7 +33,7 @@ tensors =
   |> Array.stream_chunks()
   |> Stream.take(4)
   |> Enum.map(fn {_index, chunk_data} ->
-  Nx.from_binary(chunk_data, {:f, 32})
+    Nx.from_binary(chunk_data, {:f, 32})
   end)
 
 length(tensors)
@@ -49,7 +49,7 @@ batches =
   |> Stream.chunk_every(2)
   |> Enum.take(2)
 
-Kino.inspect(batches |> Enum.map(&Nx.shape/1))
+Kino.inspect(batches |> Enum.map(fn batch -> Enum.map(batch, &Nx.shape/1) end))
 ```
 
 ## Using DataLoader

@@ -4,7 +4,7 @@ if Code.ensure_loaded?(Broadway) do
 
     use GenStage
 
-    defstruct [:array, :opts, :indices, :position]
+    alias ExZarr.Streaming.Producer
 
     @doc false
     def start_link(opts) do
@@ -15,33 +15,25 @@ if Code.ensure_loaded?(Broadway) do
     def init(opts) do
       array = Keyword.fetch!(opts, :array)
       stream_opts = Keyword.get(opts, :stream_opts, [])
-      indices = ExZarr.Streaming.chunk_indices(array, stream_opts)
 
-      {:producer, %__MODULE__{array: array, opts: stream_opts, indices: indices, position: 0}}
+      {:producer, Producer.chunk_init(array, stream_opts)}
     end
 
     @impl GenStage
-    def handle_demand(demand, %{array: array, opts: opts, indices: indices, position: pos} = state)
-        when demand > 0 do
-      events =
-        indices
-        |> Enum.drop(pos)
-        |> Enum.take(demand)
-        |> Enum.map(fn chunk_index ->
-          case ExZarr.Streaming.build_chunk_from_read(array, chunk_index, opts) do
-            nil ->
-              nil
+    def handle_demand(_demand, %{remaining: []} = state) do
+      {:stop, :normal, state}
+    end
 
-            {index, data} ->
-              chunk_message({index, data})
+    def handle_demand(demand, state) when demand > 0 do
+      {events, new_state} = Producer.chunk_demand(demand, state)
 
-            %{index: index, data: data} ->
-              chunk_message({index, data})
-          end
+      messages =
+        Enum.map(events, fn
+          {index, data} -> chunk_message({index, data})
+          %{index: index, data: data} -> chunk_message({index, data})
         end)
-        |> Enum.reject(&is_nil/1)
 
-      {:noreply, events, %{state | position: pos + length(events)}}
+      {:noreply, messages, new_state}
     end
 
     defp chunk_message(data) do

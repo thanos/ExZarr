@@ -83,7 +83,7 @@ v1.1.0 introduces:
 - `ExZarr.Array.write_stream/3` - chunk ingestion from enumerables
 - `ExZarr.Telemetry` - observability events
 - `ExZarr.Flow`, `ExZarr.GenStage`, `ExZarr.Broadway` - optional pipeline integrations
-- `ExZarr.Streaming` - shared streaming internals
+- Shared streaming internals (internal module behind Array streaming APIs)
 
 ## BEAM-Specific Considerations
 

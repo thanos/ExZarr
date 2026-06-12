@@ -45,7 +45,7 @@ Chunk writes are atomic per object. A failed `write_stream/3` leaves prior
 chunks intact. Use checkpoints for resumable ingestion:
 
 ```elixir
-ExZarr.Array.write_stream(chunk_stream, array,
+ExZarr.Array.write_stream(array, chunk_stream,
   checkpoint: fn %{last_index: index, written: n} ->
     File.write!("checkpoint.json", Jason.encode!(%{index: index, written: n}))
   end
@@ -123,7 +123,7 @@ externally or use deterministic chunk indices.
 
 ## Operational Considerations
 
-- Monitor `[:ex_zarr, :chunk, :read]` and `[:ex_zarr, :chunk, :write]` telemetry
+- Monitor `[:ex_zarr, :chunk, :read, :stop]` and `[:ex_zarr, :chunk, :write, :stop]` telemetry
 - Set timeouts based on chunk size and network latency
 - Use `ordered: false` for maximum throughput when order is not required
 - Size chunks 1-8 MB for cloud storage balance between request overhead and parallelism

@@ -1,11 +1,11 @@
 # ExZarr
 
-[![Hex.pm](https://img.shields.io/hexpm/v/ex_zarr.svg)](https://hex.pm/packages/ex_zarr)
-[![Hex Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/ex_zarr)
-[![Hex.pm Downloads](https://img.shields.io/hexpm/dt/ex_zarr.svg)](https://hex.pm/packages/ex_zarr)
-[![License](https://img.shields.io/hexpm/l/ex_zarr.svg)](https://github.com/thanos/ExZarr/blob/main/LICENSE)
-[![Build Status](https://github.com/thanos/ExZarr/workflows/CI/badge.svg)](https://github.com/thanos/ExZarr/actions)
-[![Coverage Status](https://coveralls.io/repos/github/thanos/ExZarr/badge.svg?branch=main)](https://coveralls.io/github/thanos/ExZarr?branch=main)
+[Hex.pm](https://hex.pm/packages/ex_zarr)
+[Hex Docs](https://hexdocs.pm/ex_zarr)
+[Hex.pm Downloads](https://hex.pm/packages/ex_zarr)
+[License](https://github.com/thanos/ExZarr/blob/main/LICENSE)
+[Build Status](https://github.com/thanos/ExZarr/actions)
+[Coverage Status](https://coveralls.io/github/thanos/ExZarr?branch=main)
 
 Elixir implementation of [Zarr](https://zarr.dev): compressed, chunked, N-dimensional arrays designed for parallel computing and scientific data storage.
 
@@ -17,10 +17,11 @@ Elixir implementation of [Zarr](https://zarr.dev): compressed, chunked, N-dimens
 - **High Performance** - 26x faster multi-chunk reads with near-optimal scaling (see [Performance Guide](guides/performance.md))
 - **N-dimensional arrays** with support for 10 data types (int8-64, uint8-64, float32/64)
 - **BEAM-native streaming** - `stream_chunks/2`, `stream_slices/3`, and `write_stream/3` for bounded-memory processing
+- **Telemetry** — `:telemetry` events for chunk I/O and stream lifecycle (`ExZarr.Telemetry`)
 - **Pipeline integrations** - Optional Flow, GenStage, and Broadway support for production pipelines
 - **Parallel chunk processing** - Automatic parallel I/O and decompression for large operations
 - **Chunking** along arbitrary dimensions for optimized I/O operations
-- **Compression** using Erlang zlib (with fallback support for zstd and lz4)
+- **Compression** — Erlang `:zlib` plus Zig NIF codecs (zstd, lz4, snappy, blosc, bzip2, crc32c)
 - **Flexible storage** backends (in-memory, filesystem, and zip archive)
 - **Custom storage backends** with plugin architecture for S3, databases, and more
 - **Hierarchical groups** for organizing multiple arrays
@@ -92,9 +93,14 @@ array
 |> ExZarr.Array.stream_chunks(concurrency: 8, ordered: false)
 |> Stream.map(fn {_index, data} -> process_chunk(data) end)
 |> Stream.run()
+
+# Row-wise slice streaming
+array
+|> ExZarr.Array.stream_slices(0, start: {0, 0}, stop: {100, 10})
+|> Enum.each(fn {_start, row} -> process_row(row) end)
 ```
 
-Write chunks from a stream with checkpointing:
+Attach telemetry handlers for production observability — see [guides/telemetry.md](guides/telemetry.md).
 
 ```elixir
 ExZarr.Array.write_stream(array, chunk_stream,
@@ -115,6 +121,7 @@ ExZarr v0.8+ includes major performance optimizations:
 - **99% memory reduction** - Eliminated redundant binary copies
 
 **Benchmark results** (400×400 array, 16 chunks):
+
 - Before: 110ms per read
 - After: 4.2ms per read
 - **Speedup: 26×**
@@ -182,14 +189,16 @@ array.version  # Returns 2 or 3
 
 ### Key Differences Between v2 and v3
 
-| Feature | v2 | v3 |
-|---------|----|----|
-| Metadata file | `.zarray` | `zarr.json` |
-| Chunk keys | Dot-separated (`0.1.2`) | Slash-separated with prefix (`c/0/1/2`) |
-| Codec organization | Separate `filters` and `compressor` | Unified `codecs` array |
-| Data types | NumPy-style strings (`<f8`) | Simplified names (`float64`) |
-| Groups | Separate `.zgroup` files | Unified `zarr.json` with `node_type` |
-| Attributes | Separate `.zattrs` files | Embedded in `zarr.json` |
+
+| Feature            | v2                                  | v3                                      |
+| ------------------ | ----------------------------------- | --------------------------------------- |
+| Metadata file      | `.zarray`                           | `zarr.json`                             |
+| Chunk keys         | Dot-separated (`0.1.2`)             | Slash-separated with prefix (`c/0/1/2`) |
+| Codec organization | Separate `filters` and `compressor` | Unified `codecs` array                  |
+| Data types         | NumPy-style strings (`<f8`)         | Simplified names (`float64`)            |
+| Groups             | Separate `.zgroup` files            | Unified `zarr.json` with `node_type`    |
+| Attributes         | Separate `.zattrs` files            | Embedded in `zarr.json`                 |
+
 
 ### Converting from v2 to v3
 
@@ -246,11 +255,13 @@ elixir examples/python_interop_demo.exs
 ```
 
 This demonstrates:
+
 - Creating arrays with ExZarr that Python can read
 - Creating arrays with Python that ExZarr can read
 - Compatible metadata and compression
 
 **For detailed interoperability information, see [INTEROPERABILITY.md](INTEROPERABILITY.md)** which covers:
+
 - Data type compatibility table
 - Compression compatibility guidelines
 - Metadata format details
@@ -268,6 +279,7 @@ mix run examples/custom_codec_example.exs
 ```
 
 This demonstrates:
+
 - Creating custom transformation codecs (UppercaseCodec)
 - Creating custom compression codecs (RleCodec)
 - Registering and unregistering codecs at runtime
@@ -284,6 +296,7 @@ cat test/ex_zarr_custom_storage_test.exs
 ```
 
 The example demonstrates:
+
 - Implementing the `ExZarr.Storage.Backend` behavior
 - Registering and using custom backends
 - Integration with filters and compression
@@ -303,14 +316,14 @@ All data types use little-endian byte order by default, consistent with the Zarr
 
 ExZarr provides the following built-in compression options:
 
-- **`:none`** - No compression (fastest, largest size)
-- **`:zlib`** - Standard zlib compression (good balance of speed and compression)
-- **`:crc32c`** - CRC32C checksum codec (RFC 3720 compatible with Python zarr)
-- **`:zstd`** - Zstandard compression (Zig NIF implementation)
-- **`:lz4`** - LZ4 compression (Zig NIF implementation)
-- **`:snappy`** - Snappy compression (Zig NIF implementation)
-- **`:blosc`** - Blosc meta-compressor (Zig NIF implementation)
-- **`:bzip2`** - Bzip2 compression (Zig NIF implementation)
+- `**:none`** - No compression (fastest, largest size)
+- `**:zlib**` - Standard zlib compression (good balance of speed and compression)
+- `**:crc32c**` - CRC32C checksum codec (RFC 3720 compatible with Python zarr)
+- `**:zstd**` - Zstandard compression (Zig NIF implementation)
+- `**:lz4**` - LZ4 compression (Zig NIF implementation)
+- `**:snappy**` - Snappy compression (Zig NIF implementation)
+- `**:blosc**` - Blosc meta-compressor (Zig NIF implementation)
+- `**:bzip2**` - Bzip2 compression (Zig NIF implementation)
 
 The `:zlib` codec uses Erlang's built-in `:zlib` module for maximum reliability and compatibility.
 
@@ -369,10 +382,12 @@ end
 ```
 
 For complete examples, see `examples/custom_codec_example.exs` which includes:
+
 - `UppercaseCodec` - Simple transformation codec
 - `RleCodec` - Run-length encoding compression
 
 **Custom codec features:**
+
 - Runtime registration and unregistration
 - Behavior-based contract for consistency
 - Seamless integration with built-in codecs
@@ -383,11 +398,12 @@ For complete examples, see `examples/custom_codec_example.exs` which includes:
 
 ExZarr includes three built-in storage backends:
 
-- **`:memory`** - In-memory storage for temporary arrays (non-persistent, fast)
-- **`:filesystem`** - Local filesystem storage using Zarr v2 directory structure (persistent, interoperable)
-- **`:zip`** - Zip archive storage for compact single-file arrays (portable, easy to distribute)
+- `**:memory`** - In-memory storage for temporary arrays (non-persistent, fast)
+- `**:filesystem**` - Local filesystem storage using Zarr v2 directory structure (persistent, interoperable)
+- `**:zip**` - Zip archive storage for compact single-file arrays (portable, easy to distribute)
 
 Arrays stored on the filesystem use the standard Zarr format:
+
 - **v2 format**: Metadata in `.zarray` files, chunks as `0.0`, `0.1`, groups as `.zgroup`
 - **v3 format**: Metadata in `zarr.json` files, chunks in `c/` directory as `c/0/0`, `c/0/1`
 - Automatic format detection when opening existing arrays
@@ -464,6 +480,7 @@ end
 ```
 
 **Custom storage backend features:**
+
 - Runtime registration and unregistration via Registry
 - Behavior-based contract ensures all required operations are implemented
 - Seamless integration with all ExZarr features (filters, compression, metadata)
@@ -471,6 +488,7 @@ end
 - Thread-safe operations managed by OTP GenServer
 
 **Required callbacks:**
+
 - `backend_id/0` - Returns unique atom identifier
 - `init/1` - Initialize storage with configuration
 - `open/1` - Open existing storage location
@@ -609,17 +627,20 @@ assert_received {:mock_storage, :write_chunk, _}
 ```
 
 **Cloud Storage Features:**
+
 - S3, Azure Blob, and GCS backends provide scalable object storage
 - Automatic credential management from environment/config
 - Support for custom regions, buckets, and access patterns
 - Thread-safe concurrent access
 
 **Database Storage Features:**
+
 - Mnesia provides distributed ACID transactions
 - MongoDB GridFS handles large files (> 16MB chunks)
 - Both support replication and high availability
 
 **Mock Storage Features:**
+
 - Error simulation (always fail, random, or specific operations)
 - Latency simulation for performance testing
 - Message tracking for verification
@@ -628,20 +649,36 @@ assert_received {:mock_storage, :write_chunk, _}
 ## Architecture
 
 ExZarr uses:
-- **Erlang :zlib** for compression and decompression
+
+- **Erlang :zlib** for zlib/gzip compression
+- **Zig NIFs** (`ExZarr.Codecs.ZigCodecs`) for zstd, lz4, snappy, blosc, bzip2, and crc32c
 - **GenServer** for array state management
-- **Pluggable storage backends** for memory and filesystem storage
+- **Lazy streams** (`Stream.resource/3`, `Task.async_stream/3`) for bounded-memory chunk I/O
+- **Optional pipeline modules** (`ExZarr.Flow`, `ExZarr.GenStage`, `ExZarr.Broadway`) for backpressure and fault tolerance
+- `**:telemetry`** for chunk read/write and stream lifecycle events
+- **Pluggable storage backends** for memory, filesystem, zip, and cloud backends
 - **Zarr v2 and v3 specifications** for interoperability with Python, Julia, and other Zarr implementations
 - **Version-aware codec pipeline** that automatically routes between v2 and v3 implementations
 - **Automatic format detection** when opening existing arrays
 
 ## Development
 
+Requires **Elixir ~> 1.14**, **OTP 25+**, and **Zig 0.16.0** for codec NIF compilation (via zigler 0.16).
+Install compression libraries before compiling:
+
+```bash
+# macOS
+brew install zstd lz4 snappy c-blosc bzip2
+
+# Ubuntu/Debian
+sudo apt-get install libzstd-dev liblz4-dev libsnappy-dev libblosc-dev libbz2-dev
+```
+
 ```bash
 # Install dependencies
 mix deps.get
 
-# Compile the project
+# Compile the project (requires zig 0.16 on PATH)
 mix compile
 
 # Run tests
@@ -686,27 +723,28 @@ mix coveralls
 
 The project uses GitHub Actions for continuous integration. The CI pipeline:
 
-- Tests on Elixir 1.16-1.19 and OTP 25-28
+- Tests on Elixir 1.17–1.19, 1.20-rc, and OTP 26–28 (Ubuntu)
+- Installs Zig 0.16.0 for codec NIF builds
 - Runs all test suites (unit, integration, property-based)
-- Performs code quality checks (Credo, Dialyzer)
-- Generates test coverage reports
-- Validates across macOS and Ubuntu
+- Performs code quality checks (Credo, Dialyzer, `mix format`)
+- Generates test coverage reports and documentation (`mix docs --warnings-as-errors`)
 
 ## Testing
 
 ExZarr includes comprehensive test coverage:
 
 - **Unit tests** for individual modules and end-to-end workflows
-- **Property-based tests** using StreamData (21 properties, 2,100+ generated test cases)
-- **Python integration tests** verifying interoperability with zarr-python (14 tests)
-- **v3 integration tests** verifying Zarr v3 specification compliance (23 tests)
-- **Custom codec tests** verifying the codec plugin system (29 tests)
-- **Custom storage tests** verifying the storage backend plugin system (20 tests)
-- **Zip storage tests** verifying zip archive backend (6 tests)
-- **Filter tests** verifying transformation pipeline (36 tests)
-- **Total**: 466 tests + 21 properties
+- **Property-based tests** using StreamData (67 properties)
+- **Doctests** across public modules (146 doctests)
+- **Python integration tests** verifying interoperability with zarr-python
+- **v3 integration tests** verifying Zarr v3 specification compliance
+- **Streaming API tests** for `stream_chunks/2`, `stream_slices/3`, `write_stream/3`, and pipeline integrations
+- **Custom codec tests** verifying the codec plugin system
+- **Custom storage tests** verifying the storage backend plugin system
+- **Total**: 1,526 tests + 67 properties + 146 doctests (229 cloud/integration tests excluded in default CI)
 
 Key testing areas:
+
 - Compression and decompression invariants
 - Filter pipeline transformations (Delta, Quantize, Shuffle, etc.)
 - Chunk index calculations for N-dimensional arrays
@@ -734,6 +772,7 @@ mix test test/ex_zarr_python_integration_test.exs
 ```
 
 These tests verify that:
+
 - ExZarr can read arrays created by zarr-python
 - Python can read arrays created by ExZarr
 - All 10 data types are compatible
@@ -754,14 +793,12 @@ Comprehensive guides for all skill levels:
   - Reading and writing data
   - Choosing chunk sizes
   - Common patterns and best practices
-
 - **[Advanced Usage](guides/performance.md)** - Deep dive into advanced features
   - Zarr v3 features (sharding, dimension names, codec pipeline)
   - Custom chunk grids (regular and irregular)
   - Cloud storage optimization (S3, GCS, Azure)
   - Performance tuning and profiling
   - Custom storage backends and codecs
-
 - **[Migration from Python](guides/python_interop.md)** - For zarr-python users
   - API comparison and translation guide
   - Data structure differences (NumPy arrays vs nested tuples)
@@ -779,37 +816,31 @@ Practical examples demonstrating real-world usage:
   - Regional and temporal queries
   - Statistical computations
   - Compression and storage efficiency
-
 - **[Sharded Cloud Storage](examples/sharded_cloud_storage.exs)** - Optimizing for S3/cloud storage
   - Comparing sharded vs non-sharded storage
   - Minimizing API calls and costs
   - Performance measurements
   - Configuration best practices
   - Cost analysis
-
 - **[Dimension Names](examples/dimension_names.exs)** - Named dimension slicing
   - Creating arrays with semantic dimension labels
   - Intuitive slicing by name instead of index
   - Real-world examples (climate, medical imaging)
   - Validation and best practices
-
 - **[Nx Integration](examples/nx_integration.exs)** - Numerical computing with Nx
   - Converting between Nx tensors and Zarr arrays
   - Machine learning workflows
   - Streaming large arrays
   - Performance optimization
   - Batch processing
-
 - **[Python Interoperability](examples/python_interop_demo.exs)** - Working with Python zarr
   - Reading Python-created arrays
   - Writing arrays for Python consumption
   - Data format compatibility
-
 - **[S3 Storage](examples/s3_storage.exs)** - Using Amazon S3 as storage backend
   - S3 configuration and authentication
   - Creating and accessing S3-backed arrays
   - Performance optimization for cloud storage
-
 - **[Custom Codec](examples/custom_codec_example.exs)** - Creating custom codecs
   - Implementing transformation and compression codecs
   - Registering codecs at runtime
@@ -821,37 +852,35 @@ Full API documentation is available at [hexdocs.pm/ex_zarr](https://hexdocs.pm/e
 
 Key modules:
 
-- **`ExZarr`** - Main API for creating and opening arrays
-- **`ExZarr.Array`** - Array operations (reading, writing, slicing)
-- **`ExZarr.Group`** - Hierarchical organization of arrays
-- **`ExZarr.Metadata`** - Zarr v2 metadata handling
-- **`ExZarr.MetadataV3`** - Zarr v3 metadata handling
-- **`ExZarr.Storage.Backend`** - Storage backend behavior
-- **`ExZarr.Codecs.Codec`** - Codec behavior for custom transformations
-- **`ExZarr.ChunkGrid`** - Chunk grid configuration
+- `**ExZarr`** - Main API for creating and opening arrays
+- `**ExZarr.Array**` - Array operations (reading, writing, slicing, streaming)
+- `**ExZarr.Telemetry**` - Observability events for chunk I/O and streams
+- `**ExZarr.Flow**`, `**ExZarr.GenStage**`, `**ExZarr.Broadway**` - Optional pipeline integrations
+- `**ExZarr.Group**` - Hierarchical organization of arrays
+- `**ExZarr.Metadata**` - Zarr v2 metadata handling
+- `**ExZarr.MetadataV3**` - Zarr v3 metadata handling
+- `**ExZarr.Storage.Backend**` - Storage backend behavior
+- `**ExZarr.Codecs.Codec**` - Codec behavior for custom transformations
+- `**ExZarr.ChunkGrid**` - Chunk grid configuration
 
 ## Roadmap
 
-Completed features:
-- Zig NIFs for high-performance compression codecs (zstd, lz4, snappy, blosc, bzip2)
-- CRC32C checksum codec (RFC 3720 compatible with Python zarr)
-- Custom codec plugin system with behavior-based architecture
-- Filter pipeline support (Delta, Quantize, Shuffle, FixedScaleOffset, AsType, BitRound)
-- Zip archive storage backend
-- Custom storage backend plugin system (for S3, databases, cloud storage, etc.)
-- Zarr v3 specification support with automatic version detection
-- Unified codec pipeline for v3 format
-- Full backward compatibility with v2 arrays
+See [ROADMAP.md](ROADMAP.md) for the full release plan.
 
-Future improvements planned for ExZarr:
+**v1.1.0 (current)** — BEAM-native streaming: `stream_chunks/2`, `stream_slices/3`,
+`write_stream/3`, telemetry, Flow/GenStage/Broadway integrations, cloud patterns
+guide, and production cookbook.
 
-- Additional filters (PackBits, Categorize - require string/boolean dtype support)
-- Concurrent chunk reading and writing
-- Advanced array slicing and indexing operations
-- Distributed computing integration with Broadway or GenStage
-- Built-in S3 storage backend
-- Streaming API for large arrays
-- v3 storage transformers and sharding extension
+**Upcoming** (high level):
+
+- **v1.2.0**  **—Cloud storage & reliability**
+  Unified retry/backoff for S3/GCS/Azure, Azure SDK migration, v3 async store read alignment, cloud integration tests.
+- **v1.3.0** — **Data science interop**
+  Explorer streaming, Nx batch recipes from `stream_chunks`, livebook curriculum, cookbook expansion.
+- **v1.4.0** — **Performance & packaging**
+  Async codec pipeline (overlap I/O + decode), vendored/static codecs (drop apt/brew deps), PackBits/Categorize filters, sharding improvements.
+- **v2.0.0** — **Distributed processing**
+  Horde/`:pg` multi-node chunk work, `PartitionSupervisor` pools, cross-node telemetry, distributed Broadway topologies.
 
 ## Contributing
 

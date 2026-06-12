@@ -2130,8 +2130,9 @@ defmodule ExZarr.Array do
 
   ## Performance
 
-  Memory usage is constant regardless of the number of chunks. Increase
-  `:concurrency` for cloud storage backends where network latency dominates.
+  Chunk data memory is bounded by `:concurrency` (one chunk buffer per in-flight
+  read). The chunk index list is materialized up front and is O(number of chunks).
+  Increase `:concurrency` for cloud storage backends where network latency dominates.
   """
   @spec stream_chunks(t(), keyword()) :: Enumerable.t()
   def stream_chunks(array, opts \\ []) do
@@ -2157,7 +2158,13 @@ defmodule ExZarr.Array do
     * `:stop` - Slice region stop (default: array shape)
     * `:step` - Step between slices (default: 1)
 
-  Streaming options match `stream_chunks/2`.
+  Streaming options (`:concurrency`, `:ordered`, `:timeout`, `:metadata`, `:on_error`)
+  match `stream_chunks/2`. Options `:filter` and `:include_missing` apply only to
+  chunk streaming.
+
+  Each unit slice calls `get_slice/2` independently. Slices that overlap the same
+  underlying chunks re-read and decompress those chunks. For row-wise iteration on
+  large arrays, prefer `stream_chunks/2` or enable chunk caching.
 
   ## Examples
 
@@ -2197,9 +2204,11 @@ defmodule ExZarr.Array do
 
   ## Durability
 
-  Each chunk write is atomic at the storage backend level. A failed stream
-  leaves previously written chunks intact. Use `:checkpoint` to record
-  progress for resumable ingestion.
+  Object storage backends (S3, GCS, Azure) provide atomic single-object writes.
+  The filesystem backend serializes concurrent writers with file locks but does
+  not use temp-file rename; a crash mid-write can leave a truncated chunk file.
+  A failed stream leaves previously written chunks intact. Use `:checkpoint` to
+  record progress for resumable ingestion.
 
   ## Examples
 

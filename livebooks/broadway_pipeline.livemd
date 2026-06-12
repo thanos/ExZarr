@@ -58,7 +58,7 @@ defmodule TilePipeline do
     Broadway.start_link(__MODULE__,
       name: __MODULE__,
       producer: [
-        module: {ExZarr.Broadway.ChunkProducer, array: array, stream_opts: [concurrency: 1}},
+        module: {ExZarr.Broadway.ChunkProducer, array: array, stream_opts: [concurrency: 1]},
         concurrency: 1
       ],
       processors: [

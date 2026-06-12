@@ -1,0 +1,328 @@
+# Run as: iex --dot-iex path/to/notebook.exs
+
+# Title: Your First Zarr Array
+
+Mix.install([
+  {:ex_zarr, "~> 1.0"},
+  {:kino, "~> 0.13"}
+])
+
+# ── Introduction ──
+
+# This livebook introduces the complete lifecycle of a Zarr array: create, write, read, stream, save, and reopen. By the end, you'll understand how Zarr arrays work as logical containers backed by chunked physical storage.
+
+# **What you'll learn:**
+
+# * How to create a Zarr array with shape, chunks, and data type
+# * Writing and reading slices of data
+# * Streaming chunks sequentially and in parallel
+# * Persisting arrays to disk and reopening them
+# * The relationship between logical arrays and physical chunks
+
+# **The Core Concept:** A Zarr array is a logical N-dimensional grid. Physically, it's stored as independent chunks. This separation enables selective access, parallel I/O, and compression per chunk.
+
+# ── Array Lifecycle Overview ──
+
+# ```mermaid
+# graph LR
+#     A[Create Array] --> B[Write Data]
+#     B --> C[Read Slices]
+#     C --> D[Stream Chunks]
+#     D --> E[Save to Storage]
+#     E --> F[Reopen Array]
+#     F --> C
+
+#     style A fill:#e1f5ff
+#     style E fill:#fff4e1
+#     style F fill:#e8f5e9
+# ```
+
+# The lifecycle above shows how arrays flow through creation, use, persistence, and reuse. Each step is independent: you can create and never save, or open and only read without writing.
+
+# ── Setup ──
+
+alias ExZarr.Array
+
+# We'll use helper modules from ExZarr.Gallery for packing/unpacking data and timing operations.
+
+alias ExZarr.Gallery.{Pack, SampleData, Metrics}
+
+# ── Step 1: Create a 2D Array in Memory ──
+
+# Let's create a 1000x1000 array of 32-bit integers, chunked into 100x100 blocks. This means the array has 10x10 = 100 chunks total.
+
+{:ok, array} =
+  Array.create(
+    shape: {1000, 1000},
+    chunks: {100, 100},
+    dtype: :int32,
+    compressor: :zstd,
+    storage: :memory
+  )
+
+IO.puts("Array created successfully")
+%{shape: array.shape, chunks: array.chunks, dtype: array.dtype, compressor: array.compressor}
+
+# **What just happened:** We created a logical 1000x1000 array. No data is allocated yet. The array exists as metadata describing its structure.
+
+# **Chunk size matters:** With 100x100 chunks and :int32 (4 bytes per value), each chunk is 100 × 100 × 4 = 40,000 bytes uncompressed. After zstd compression, chunks will be smaller depending on data patterns.
+
+# ── Visualizing the Chunk Grid ──
+
+# Our 1000x1000 array is divided into a 10x10 grid of chunks:
+
+# ```mermaid
+# graph TD
+#     A["Array: 1000×1000<br/>Logical View"] --> B["Chunk Grid: 10×10<br/>100 chunks total"]
+#     B --> C["Each chunk: 100×100<br/>10,000 elements"]
+#     C --> D["Stored independently<br/>Compressed with zstd"]
+
+#     style A fill:#e1f5ff
+#     style B fill:#f3e5f5
+#     style C fill:#fff9c4
+#     style D fill:#c8e6c9
+# ```
+
+# When you read or write data, ExZarr determines which chunks overlap your request and loads only those.
+
+# ── Step 2: Write a Small Slice ──
+
+# Let's write a 10x10 region in the top-left corner. We'll use values 1 through 100.
+
+# Generate a flat list of integers 1..100
+data_list = Enum.to_list(1..100)
+
+# Pack into binary format (row-major, 4 bytes per int32)
+data_binary = Pack.pack(data_list, :int32)
+
+# Write to array slice
+:ok =
+  Array.set_slice(array, data_binary,
+    start: {0, 0},
+    stop: {10, 10}
+  )
+
+IO.puts("Wrote 10x10 slice (100 values) to array")
+:ok
+
+# **What happened:** ExZarr determined that the region [0:10, 0:10] overlaps only chunk (0, 0). It loaded that chunk (or created it if empty), updated the relevant 100 elements, and stored it back compressed.
+
+# **Row-major order:** Data is written row-by-row. The first 10 values are row 0, the next 10 are row 1, etc.
+
+# ── Step 3: Read the Slice Back ──
+
+# Now let's verify the data by reading the same region.
+
+{:ok, read_binary} =
+  Array.get_slice(array,
+    start: {0, 0},
+    stop: {10, 10}
+  )
+
+# Unpack binary to list of integers
+values = Pack.unpack(read_binary, :int32)
+
+IO.puts("Read back #{length(values)} values")
+IO.puts("First 20 values: #{inspect(Enum.take(values, 20))}")
+
+# **Chunk read:** ExZarr loaded chunk (0, 0), decompressed it, and extracted the 10x10 region. Since our write covered this entire region in chunk (0, 0), we get back exactly what we wrote.
+
+# ── Step 4: Write a Larger Region ──
+
+# Now let's write a 200x200 region with a pattern: the value at position (r, c) is `r * 1000 + c`.
+
+rows = 200
+cols = 200
+
+# Generate 200x200 matrix with pattern
+matrix = SampleData.matrix(rows, cols)
+
+# Pack to binary
+data_binary_large = Pack.pack(matrix, :int32)
+
+# Write to array starting at (0, 0)
+:ok =
+  Array.set_slice(array, data_binary_large,
+    start: {0, 0},
+    stop: {rows, cols}
+  )
+
+IO.puts("Wrote #{rows}x#{cols} region (#{rows * cols} values)")
+:ok
+
+# **Multiple chunks affected:** A 200x200 region spans chunks (0,0), (0,1), (1,0), and (1,1) — a 2x2 chunk grid. ExZarr updated all four chunks independently.
+
+# ```mermaid
+# graph LR
+#     A["200×200 Write Region"] --> B["Chunk 0,0<br/>100×100"]
+#     A --> C["Chunk 0,1<br/>100×100"]
+#     A --> D["Chunk 1,0<br/>100×100"]
+#     A --> E["Chunk 1,1<br/>100×100"]
+
+#     style A fill:#ffebee
+#     style B fill:#e1f5ff
+#     style C fill:#e1f5ff
+#     style D fill:#e1f5ff
+#     style E fill:#e1f5ff
+# ```
+
+# ── Step 5: Chunk Streaming (Sequential) ──
+
+# Instead of reading slices, we can stream chunks directly. This is useful when you need to process the entire array chunk-by-chunk.
+
+{result, elapsed_us} =
+  Metrics.time(fn ->
+    Array.chunk_stream(array)
+    |> Stream.take(5)
+    |> Enum.map(fn {chunk_index, chunk_binary} ->
+      {chunk_index, byte_size(chunk_binary)}
+    end)
+  end)
+
+IO.puts("Streamed first 5 chunks in #{Metrics.human_us(elapsed_us)}")
+IO.inspect(result, label: "Chunks (index, compressed size)")
+
+# **What is chunk_stream:** Returns a stream of `{chunk_index, chunk_binary}` tuples. The binary is already decompressed and ready for processing. This avoids reading the entire array into memory.
+
+# **Use case:** Processing large arrays that don't fit in memory, or distributing chunk processing across workers.
+
+# ── Step 6: Chunk Streaming (Parallel) ──
+
+# For remote storage (S3, GCS), parallel chunk reads significantly improve throughput. Even for local storage, parallelism can help on fast SSDs.
+
+progress_callback = fn done, total ->
+  if rem(done, 10) == 0 or done == total do
+    IO.puts("Progress: #{done}/#{total} chunks")
+  end
+end
+
+{count, elapsed_us} =
+  Metrics.time(fn ->
+    Array.chunk_stream(array,
+      parallel: 4,
+      ordered: false,
+      progress_callback: progress_callback
+    )
+    |> Stream.take(50)
+    |> Enum.count()
+  end)
+
+IO.puts("\nStreamed #{count} chunks in parallel in #{Metrics.human_us(elapsed_us)}")
+
+# **Parallel streaming:** Requests up to 4 chunks simultaneously. `ordered: false` means chunks can arrive in any order, maximizing throughput.
+
+# **When to use parallel:** Remote storage, large chunk counts, or when processing is faster than I/O.
+
+# ── Step 7: Save to Disk ──
+
+# Memory storage is ephemeral. Let's persist the array to disk.
+
+base_dir = Path.join(System.tmp_dir!(), "exzarr_livebook")
+array_path = Path.join(base_dir, "array_2d")
+
+# Clean up any previous array
+File.rm_rf!(array_path)
+File.mkdir_p!(array_path)
+
+# Save array to disk
+:ok = Array.save(array, path: array_path)
+
+IO.puts("Array saved to: #{array_path}")
+
+
+# **What got saved:**
+
+# * Metadata files: `.zarray` (v2) or `zarr.json` (v3)
+# * Chunk files: One file per written chunk
+# * Attributes: `.zattrs` if any custom metadata
+
+# Let's inspect what files were created:
+
+files = File.ls!(array_path) |> Enum.sort() |> Enum.take(10)
+IO.puts("Files in array directory (first 10):")
+Enum.each(files, fn f -> IO.puts("  #{f}") end)
+
+total_files = File.ls!(array_path) |> length()
+IO.puts("\nTotal files: #{total_files}")
+
+# **Chunk files:** Each written chunk becomes a separate file. The filename encodes the chunk's position in the grid.
+
+# ── Step 8: Reopen the Array ──
+
+# Now let's reopen the array from disk and verify it contains our data.
+
+{:ok, reopened_array} = Array.open(path: array_path)
+
+IO.puts("Array reopened successfully")
+
+%{
+  shape: reopened_array.shape,
+  chunks: reopened_array.chunks,
+  dtype: reopened_array.dtype,
+  compressor: reopened_array.compressor
+}
+
+# **Reopening:** ExZarr reads the metadata file and reconstructs the array structure. Chunk data remains on disk until you read a slice.
+
+# ── Step 9: Verify Persisted Data ──
+
+# Let's read a small slice from the reopened array to confirm data integrity.
+
+{:ok, verify_binary} =
+  Array.get_slice(reopened_array,
+    start: {0, 0},
+    stop: {3, 6}
+  )
+
+values = Pack.unpack(verify_binary, :int32)
+
+IO.puts("Read 3x6 slice from reopened array:")
+IO.inspect(values)
+
+# **Data persistence:** The values match our original pattern (r * 1000 + c). Chunk compression and decompression are lossless for integer data.
+
+# ── Why This Matters ──
+
+# **Separation of Logical and Physical:**
+# Zarr arrays are logical abstractions. You think in terms of N-dimensional slices, but the storage is chunked. This separation enables:
+
+# * **Selective access:** Read only the chunks you need
+# * **Parallelism:** Multiple processes can read different chunks simultaneously
+# * **Compression:** Each chunk compresses independently
+# * **Cloud storage:** Chunks map naturally to object storage (S3, GCS)
+
+# **Lifecycle flexibility:**
+
+# * Create arrays in memory for prototyping
+# * Save to disk for persistence
+# * Reopen from cloud storage for distributed processing
+# * Stream chunks for out-of-core computation
+
+# **Use cases:**
+
+# * **Scientific data:** Climate models, satellite imagery, microscopy
+# * **Machine learning:** Training datasets, embedding matrices, feature stores
+# * **Finance:** Tick data, order books, risk scenarios
+# * **Crypto:** On-chain analytics, mempool monitoring, DEX data
+
+# ── Key Takeaways ──
+
+# 1. **Zarr arrays are logical containers** backed by chunked storage
+# 2. **Chunks are the unit of I/O** — reads and writes operate on whole chunks
+# 3. **Metadata describes structure** — shape, chunks, dtype, compression
+# 4. **Storage is pluggable** — memory, filesystem, S3, GCS, Azure
+# 5. **Lifecycle is flexible** — create, use, save, reopen, share
+
+# ── What's Next ──
+
+# **Next in Core Zarr Concepts:**
+
+# * `01_02_metadata_and_chunks.livemd` - Deep dive into `.zarray`, `.zattrs`, and chunk shapes
+# * `01_03_chunk_streaming.livemd` - Sequential vs parallel chunk streaming patterns
+# * `01_04_codecs_and_pipelines.livemd` - Zarr v2 compressors vs v3 codec pipelines
+
+# **Jump to domain-specific examples:**
+
+# * AI/GenAI: `04_ai_genai/04_01_embeddings_in_zarr.livemd`
+# * Finance: `05_finance/05_01_tick_data_cubes.livemd`
+# * Crypto: `06_crypto/06_01_block_ohlcv_series.livemd`

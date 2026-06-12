@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### BEAM-Native Streaming and Concurrent Zarr Processing
 
-ExZarr v1.1.0 adds first-class streaming APIs, pipeline integrations, and
-telemetry for large-scale array processing on the BEAM.
+ExZarr v1.1.0 adds streaming APIs, pipeline integrations, and telemetry for
+large-scale array processing on the BEAM.
 
 ### Added
 
@@ -18,7 +18,7 @@ telemetry for large-scale array processing on the BEAM.
 - `ExZarr.Array.stream_chunks/2` - lazy chunk streaming with concurrency, metadata, and filtering
 - `ExZarr.Array.stream_slices/3` - dimension-wise slice streaming
 - `ExZarr.Array.write_stream/3` - chunk ingestion from enumerables with validation and checkpoints
-- `ExZarr.Streaming` - shared streaming internals module
+- Shared streaming internals module (internal; not part of the public API)
 - `chunk_stream/2` retained as backward-compatible alias for `stream_chunks/2`
 
 #### Pipeline Integrations (Optional Dependencies)
@@ -32,7 +32,7 @@ telemetry for large-scale array processing on the BEAM.
 #### Documentation
 - `docs/architecture_review.md`, `docs/gap_analysis.md`, `docs/v1_1_design.md`
 - `docs/cloud_storage_patterns.md`
-- `docs/cookbook/` production guides
+- `docs/cookbook/` starter recipes for large-array workflows
 - `livebooks/broadway_pipeline.livemd`, `livebooks/nx_streaming.livemd`
 - `release_notes_v1_1_0.md`, `migration_guide_v1_1_0.md`
 
@@ -41,8 +41,10 @@ telemetry for large-scale array processing on the BEAM.
 
 ### Changed
 - `chunk_stream/2` now delegates to `stream_chunks/2`
-- `:parallel` option aliased to `:concurrency` in streaming APIs
+- `:parallel` option aliased to `:concurrency` in streaming APIs (logs deprecation warning)
+- Maximum `:concurrency` increased from 10 (`chunk_stream/2` legacy cap) to 128
 - Optional dependencies added: `flow`, `gen_stage`, `broadway`
+- `zigler` constrained to `~> 0.16` (requires zig 0.16.0; run `mix zig.get` before compile)
 
 ## [1.0.0] - 2026-01-27
 

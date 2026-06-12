@@ -3,6 +3,8 @@ if Code.ensure_loaded?(GenStage) do
     @moduledoc """
     GenStage producer that emits Zarr chunks on demand.
 
+    The producer stops with `:normal` after all chunk indices are consumed.
+
     ## Examples
 
         children = [
@@ -14,7 +16,7 @@ if Code.ensure_loaded?(GenStage) do
 
     use GenStage
 
-    defstruct [:array, :opts, :indices, :position]
+    alias ExZarr.Streaming.Producer
 
     @doc false
     def start_link(opts) do
@@ -25,32 +27,18 @@ if Code.ensure_loaded?(GenStage) do
     def init(opts) do
       array = Keyword.fetch!(opts, :array)
       stream_opts = Keyword.get(opts, :stream_opts, [])
-      indices = ExZarr.Streaming.chunk_indices(array, stream_opts)
 
-      {:producer, %__MODULE__{array: array, opts: stream_opts, indices: indices, position: 0}}
+      {:producer, Producer.chunk_init(array, stream_opts)}
     end
 
     @impl GenStage
-    def handle_demand(demand, %{array: array, opts: opts, indices: indices, position: pos} = state)
-        when demand > 0 do
-      {events, new_pos} = read_events(array, indices, pos, demand, opts)
-      {:noreply, events, %{state | position: new_pos}}
+    def handle_demand(_demand, %{remaining: []} = state) do
+      {:stop, :normal, state}
     end
 
-    defp read_events(array, indices, pos, demand, opts) do
-      indices
-      |> Enum.drop(pos)
-      |> Enum.reduce_while({[], pos}, fn chunk_index, {events, position} ->
-        if length(events) == demand do
-          {:halt, {events, position}}
-        else
-          case ExZarr.Streaming.build_chunk_from_read(array, chunk_index, opts) do
-            nil -> {:cont, {events, position + 1}}
-            event -> {:cont, {[event | events], position + 1}}
-          end
-        end
-      end)
-      |> then(fn {events, new_pos} -> {Enum.reverse(events), new_pos} end)
+    def handle_demand(demand, state) when demand > 0 do
+      {events, new_state} = Producer.chunk_demand(demand, state)
+      {:noreply, events, new_state}
     end
   end
 else
