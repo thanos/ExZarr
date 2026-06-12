@@ -852,16 +852,16 @@ Full API documentation is available at [hexdocs.pm/ex_zarr](https://hexdocs.pm/e
 
 Key modules:
 
-- `**ExZarr`** - Main API for creating and opening arrays
-- `**ExZarr.Array**` - Array operations (reading, writing, slicing, streaming)
-- `**ExZarr.Telemetry**` - Observability events for chunk I/O and streams
-- `**ExZarr.Flow**`, `**ExZarr.GenStage**`, `**ExZarr.Broadway**` - Optional pipeline integrations
-- `**ExZarr.Group**` - Hierarchical organization of arrays
-- `**ExZarr.Metadata**` - Zarr v2 metadata handling
-- `**ExZarr.MetadataV3**` - Zarr v3 metadata handling
-- `**ExZarr.Storage.Backend**` - Storage backend behavior
-- `**ExZarr.Codecs.Codec**` - Codec behavior for custom transformations
-- `**ExZarr.ChunkGrid**` - Chunk grid configuration
+- **`ExZarr`** - Main API for creating and opening arrays
+- **`ExZarr.Array`** - Array operations (reading, writing, slicing, streaming)
+- **`ExZarr.Telemetry`** - Observability events for chunk I/O and streams
+- **`ExZarr.Flow`**, **`ExZarr.GenStage`**, **`ExZarr.Broadway`** - Optional pipeline integrations
+- **`ExZarr.Group`** - Hierarchical organization of arrays
+- **`ExZarr.Metadata`** - Zarr v2 metadata handling
+- **`ExZarr.MetadataV3`** - Zarr v3 metadata handling
+- **`ExZarr.Storage.Backend`** - Storage backend behavior
+- **`ExZarr.Codecs.Codec`** - Codec behavior for custom transformations
+- **`ExZarr.ChunkGrid`** - Chunk grid configuration
 
 ## Roadmap
 
