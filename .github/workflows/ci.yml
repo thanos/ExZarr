@@ -50,6 +50,11 @@ jobs:
         uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.16.0
+
+      - name: Verify Zig toolchain
+        run: |
+          echo "ZIG_EXECUTABLE_PATH=$(which zig)" >> "$GITHUB_ENV"
+          zig version
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -69,19 +74,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ matrix.otp }}-
 
-      - name: Cache Zig
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/zig
-          key: ${{ runner.os }}-zig-${{ hashFiles('**/mix.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-zig-
-
       - name: Install dependencies
         run: mix deps.get
-
-      - name: Install Zig toolchain for zigler
-        run: mix zig.get
 
       - name: Compile dependencies
         run: mix deps.compile
@@ -127,6 +121,11 @@ jobs:
         with:
           version: 0.16.0
 
+      - name: Verify Zig toolchain
+        run: |
+          echo "ZIG_EXECUTABLE_PATH=$(which zig)" >> "$GITHUB_ENV"
+          zig version
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -148,9 +147,6 @@ jobs:
 
       - name: Install dependencies
         run: mix deps.get
-
-      - name: Install Zig toolchain for zigler
-        run: mix zig.get
 
       - name: Compile dependencies
         run: mix deps.compile
@@ -191,6 +187,11 @@ jobs:
         with:
           version: 0.16.0
 
+      - name: Verify Zig toolchain
+        run: |
+          echo "ZIG_EXECUTABLE_PATH=$(which zig)" >> "$GITHUB_ENV"
+          zig version
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -212,9 +213,6 @@ jobs:
 
       - name: Install dependencies
         run: mix deps.get
-
-      - name: Install Zig toolchain for zigler
-        run: mix zig.get
 
       - name: Compile dependencies
         run: mix deps.compile
