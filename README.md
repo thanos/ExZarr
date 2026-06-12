@@ -16,6 +16,8 @@ Elixir implementation of [Zarr](https://zarr.dev): compressed, chunked, N-dimens
 - **Zarr v3 and v2 Support** - Full implementation of both specifications with automatic version detection
 - **High Performance** - 26x faster multi-chunk reads with near-optimal scaling (see [Performance Guide](guides/performance.md))
 - **N-dimensional arrays** with support for 10 data types (int8-64, uint8-64, float32/64)
+- **BEAM-native streaming** - `stream_chunks/2`, `stream_slices/3`, and `write_stream/3` for bounded-memory processing
+- **Pipeline integrations** - Optional Flow, GenStage, and Broadway support for production pipelines
 - **Parallel chunk processing** - Automatic parallel I/O and decompression for large operations
 - **Chunking** along arbitrary dimensions for optimized I/O operations
 - **Compression** using Erlang zlib (with fallback support for zstd and lz4)
@@ -32,7 +34,7 @@ Add `ex_zarr` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_zarr, "~> 1.0"}
+    {:ex_zarr, "~> 1.1"}
   ]
 end
 ```
@@ -78,6 +80,30 @@ end
 # Load entire array into memory
 {:ok, data} = ExZarr.load(path: "/tmp/my_array")
 ```
+
+### Streaming Large Arrays (v1.1+)
+
+Process arrays larger than memory with lazy chunk streaming:
+
+```elixir
+{:ok, array} = ExZarr.open(path: "/data/large_dataset")
+
+array
+|> ExZarr.Array.stream_chunks(concurrency: 8, ordered: false)
+|> Stream.map(fn {_index, data} -> process_chunk(data) end)
+|> Stream.run()
+```
+
+Write chunks from a stream with checkpointing:
+
+```elixir
+ExZarr.Array.write_stream(array, chunk_stream,
+  batch_size: 4,
+  checkpoint: fn stats -> save_progress(stats) end
+)
+```
+
+See [migration_guide_v1_1_0.md](migration_guide_v1_1_0.md) and [docs/educational/v1_1_streaming_guide.md](docs/educational/v1_1_streaming_guide.md).
 
 ## Performance
 

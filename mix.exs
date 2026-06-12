@@ -1,7 +1,7 @@
 defmodule ExZarr.MixProject do
   use Mix.Project
 
-  @version "1.0.1"
+  @version "1.1.0"
   @source_url "https://github.com/thanos/ExZarr"
 
   def project do
@@ -86,10 +86,13 @@ defmodule ExZarr.MixProject do
       # Numerical computing (optional)
       {:nx, "~> 0.7", optional: true},
 
+      # Streaming pipelines (optional)
+      {:flow, "~> 1.2", optional: true},
+      {:gen_stage, "~> 1.2", optional: true},
+      {:broadway, "~> 1.0", optional: true},
+
       # Documentation
-      {:ex_doc, "~> 0.31", only: :dev, runtime: false}
-    ] ++
-      [
+      {:ex_doc, "~> 0.39", [env: :prod, hex: "ex_doc", repo: "hexpm", optional: false]},
         {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
         {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
         {:excoveralls, "~> 0.18", only: :test},

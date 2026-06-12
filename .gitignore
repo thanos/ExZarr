@@ -1,4 +1,5 @@
 /_build
+/prompts/
 /cover
 /deps
 /doc

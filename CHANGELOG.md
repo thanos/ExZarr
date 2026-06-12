@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-06-12
+
+### BEAM-Native Streaming and Concurrent Zarr Processing
+
+ExZarr v1.1.0 adds first-class streaming APIs, pipeline integrations, and
+telemetry for large-scale array processing on the BEAM.
+
+### Added
+
+#### Streaming APIs
+- `ExZarr.Array.stream_chunks/2` - lazy chunk streaming with concurrency, metadata, and filtering
+- `ExZarr.Array.stream_slices/3` - dimension-wise slice streaming
+- `ExZarr.Array.write_stream/3` - chunk ingestion from enumerables with validation and checkpoints
+- `ExZarr.Streaming` - shared streaming internals module
+- `chunk_stream/2` retained as backward-compatible alias for `stream_chunks/2`
+
+#### Pipeline Integrations (Optional Dependencies)
+- `ExZarr.Flow` with `chunk_flow/2` and `slice_flow/3`
+- `ExZarr.GenStage` with `ChunkProducer` and `SliceProducer`
+- `ExZarr.Broadway` with `ChunkProducer` and pipeline helpers
+
+#### Observability
+- `ExZarr.Telemetry` module with chunk read/write and stream start/stop events
+
+#### Documentation
+- `docs/architecture_review.md`, `docs/gap_analysis.md`, `docs/v1_1_design.md`
+- `docs/cloud_storage_patterns.md`
+- `docs/cookbook/` production guides
+- `livebooks/broadway_pipeline.livemd`, `livebooks/nx_streaming.livemd`
+- `release_notes_v1_1_0.md`, `migration_guide_v1_1_0.md`
+
+#### Benchmarks
+- `benchmarks/streaming_bench.exs` for streaming throughput measurement
+
+### Changed
+- `chunk_stream/2` now delegates to `stream_chunks/2`
+- `:parallel` option aliased to `:concurrency` in streaming APIs
+- Optional dependencies added: `flow`, `gen_stage`, `broadway`
+
 ## [1.0.0] - 2026-01-27
 
 ### First Stable Release!

@@ -2095,109 +2095,138 @@ defmodule ExZarr.Array do
   @doc """
   Streams chunks lazily as `{chunk_index, data}` tuples.
 
-  Returns a Stream that yields chunks on-demand, enabling memory-efficient
-  iteration over large arrays without loading all chunks at once.
+  This is the canonical v1.1 streaming read API. Each chunk is read,
+  decompressed, and yielded on demand so memory stays bounded regardless
+  of array size.
 
   ## Options
 
-    * `:parallel` - Number of concurrent chunk reads (default: 1, max: 10)
+    * `:concurrency` - Number of concurrent chunk reads (default: 1)
+    * `:parallel` - Alias for `:concurrency` (deprecated, use `:concurrency`)
     * `:ordered` - Maintain chunk order in output (default: true)
+    * `:timeout` - Per-chunk timeout in milliseconds (default: 60_000)
     * `:progress_callback` - Function called with `(done, total)` progress updates
-    * `:filter` - Function to filter which chunks to include
+    * `:filter` - Function to filter which chunk indices to include
+    * `:include_missing` - Stream all logical chunk indices, not only stored chunks
+    * `:metadata` - When true, yield `%{index:, data:, metadata:}` maps
+    * `:on_error` - `:skip`, `:halt`, or `fn index, reason -> ... end`
 
   ## Examples
 
-      # Sequential streaming
-      Array.chunk_stream(array)
-      |> Stream.each(fn {index, data} -> process_chunk(index, data) end)
+      array
+      |> ExZarr.Array.stream_chunks()
+      |> Stream.map(fn {index, data} -> process_chunk(index, data) end)
       |> Stream.run()
 
-      # Parallel processing with progress
-      Array.chunk_stream(array,
-        parallel: 4,
-        progress_callback: fn done, total ->
-          Logger.info("Progress: \#{done}/\#{total}")
-        end
-      )
+      array
+      |> ExZarr.Array.stream_chunks(concurrency: 4, ordered: false)
       |> Enum.to_list()
 
-      # Filter specific chunks
-      Array.chunk_stream(array,
-        filter: fn {x, y} -> x > 10 and y < 20 end
-      )
+      array
+      |> ExZarr.Array.stream_chunks(metadata: true)
+      |> Enum.map(fn %{index: index, metadata: meta} ->
+        {index, meta.bounds}
+      end)
 
   ## Performance
 
-  Memory usage is constant regardless of the number of chunks. For large arrays,
-  use parallel mode to improve throughput, especially with cloud storage backends.
+  Memory usage is constant regardless of the number of chunks. Increase
+  `:concurrency` for cloud storage backends where network latency dominates.
+  """
+  @spec stream_chunks(t(), keyword()) :: Enumerable.t()
+  def stream_chunks(array, opts \\ []) do
+    ExZarr.Streaming.stream_chunks(array, opts, &stream_read_chunk/2)
+  end
+
+  @doc """
+  Streams array slices along a dimension.
+
+  Yields `{slice_start, data}` tuples for each unit slice along `along`.
+  This is useful for row-wise or time-step processing without loading the
+  full array.
+
+  ## Arguments
+
+    * `array` - The source array
+    * `along` - Dimension index to slice along (0-based)
+    * `opts` - Slice bounds and streaming options
+
+  ## Slice Options
+
+    * `:start` - Slice region start (default: all zeros)
+    * `:stop` - Slice region stop (default: array shape)
+    * `:step` - Step between slices (default: 1)
+
+  Streaming options match `stream_chunks/2`.
+
+  ## Examples
+
+      # Stream each row of a 2D array
+      array
+      |> ExZarr.Array.stream_slices(0)
+      |> Enum.each(fn {_start, row_data} -> process_row(row_data) end)
+
+      # Stream time steps from a region
+      array
+      |> ExZarr.Array.stream_slices(0,
+        start: {100, 0, 0},
+        stop: {200, 180, 360},
+        concurrency: 4
+      )
+      |> Enum.to_list()
+  """
+  @spec stream_slices(t(), non_neg_integer(), keyword()) :: Enumerable.t()
+  def stream_slices(array, along, opts \\ []) do
+    ExZarr.Streaming.stream_slices(array, along, opts, fn array, start_coords, stop_coords ->
+      get_slice(array, start: start_coords, stop: stop_coords)
+    end)
+  end
+
+  @doc """
+  Writes chunks from a stream into an array.
+
+  Accepts a stream of `{chunk_index, binary}` tuples or
+  `%{index:, data:}` maps. Each chunk is encoded and written atomically.
+
+  ## Options
+
+    * `:batch_size` - Chunks to process per batch before optional flush (default: 1)
+    * `:validate` - Validate chunk byte size before writing (default: true)
+    * `:checkpoint` - `fn stats -> ... end` called after each successful batch
+    * `:on_error` - `:halt`, `:skip`, or `fn index, reason -> ... end`
+
+  ## Durability
+
+  Each chunk write is atomic at the storage backend level. A failed stream
+  leaves previously written chunks intact. Use `:checkpoint` to record
+  progress for resumable ingestion.
+
+  ## Examples
+
+      ExZarr.Array.write_stream(array, chunks)
+      |> case do
+        {:ok, %{written: n}} -> IO.puts("Wrote \#{n} chunks")
+        {:error, reason} -> IO.inspect(reason)
+      end
+
+      File.stream!("chunks.bin", [], 40_000)
+      |> Stream.with_index()
+      |> Stream.map(fn {data, i} -> {chunk_index(i), data} end)
+      |> then(&ExZarr.Array.write_stream(array, &1, batch_size: 8))
+  """
+  @spec write_stream(t(), Enumerable.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  def write_stream(array, stream, opts \\ []) do
+    ExZarr.Streaming.write_stream(array, stream, opts, &write_stream_chunk/3)
+  end
+
+  @doc """
+  Streams chunks lazily as `{chunk_index, data}` tuples.
+
+  Alias for `stream_chunks/2` retained for backward compatibility.
   """
   @spec chunk_stream(t(), keyword()) :: Enumerable.t()
   def chunk_stream(array, opts \\ []) do
-    parallel = min(Keyword.get(opts, :parallel, 1), 10)
-    ordered = Keyword.get(opts, :ordered, true)
-    progress_callback = Keyword.get(opts, :progress_callback, nil)
-    filter = Keyword.get(opts, :filter, nil)
-
-    # Get list of all chunks that exist in storage
-    chunk_indices =
-      case Storage.list_chunks(array.storage) do
-        {:ok, indices} -> indices
-        {:error, _} -> []
-      end
-
-    # Apply filter if provided
-    filtered_indices =
-      if filter do
-        Enum.filter(chunk_indices, filter)
-      else
-        chunk_indices
-      end
-
-    total = length(filtered_indices)
-
-    if parallel > 1 do
-      # Parallel mode using Task.async_stream
-      filtered_indices
-      |> Task.async_stream(
-        fn chunk_index ->
-          case stream_read_chunk(array, chunk_index) do
-            {:ok, data} -> {chunk_index, data}
-            {:error, _reason} -> nil
-          end
-        end,
-        max_concurrency: parallel,
-        ordered: ordered,
-        timeout: 60_000
-      )
-      |> Stream.with_index(1)
-      |> Stream.map(fn {{:ok, result}, index} ->
-        notify_progress(progress_callback, index, total)
-        result
-      end)
-      |> Stream.reject(&is_nil/1)
-    else
-      # Sequential mode using Stream.resource
-      Stream.resource(
-        fn -> {filtered_indices, 0} end,
-        fn
-          {[], done} ->
-            {:halt, {[], done}}
-
-          {[chunk_index | rest], done} ->
-            case stream_read_chunk(array, chunk_index) do
-              {:ok, data} ->
-                new_done = done + 1
-                notify_progress(progress_callback, new_done, total)
-                {[{chunk_index, data}], {rest, new_done}}
-
-              {:error, _reason} ->
-                # Skip this chunk and continue
-                {[], {rest, done}}
-            end
-        end,
-        fn _state -> :ok end
-      )
-    end
+    stream_chunks(array, opts)
   end
 
   @doc """
@@ -2248,6 +2277,20 @@ defmodule ExZarr.Array do
       {:exit, reason} -> {:error, {:exit, reason}}
     end)
   end
+
+  defp write_stream_chunk(array, chunk_index, data) do
+    ExZarr.Telemetry.chunk_write(
+      {array.shape, array.chunks, array.dtype},
+      chunk_index,
+      byte_size(data),
+      fn ->
+        write_chunks(array, [data], [chunk_index])
+      end
+    )
+  end
+
+  @doc false
+  def __ex_zarr_stream_read_chunk__(array, chunk_index), do: stream_read_chunk(array, chunk_index)
 
   # Private helper to read a single chunk with lock/cache management
   defp stream_read_chunk(array, chunk_index) do
@@ -2305,13 +2348,6 @@ defmodule ExZarr.Array do
         end
     end
   end
-
-  # Private helper for progress notifications
-  defp notify_progress(callback, done, total) when is_function(callback, 2) do
-    callback.(done, total)
-  end
-
-  defp notify_progress(_callback, _done, _total), do: :ok
 
   defp read_chunks_with_sharding(array, chunk_indices) do
     # Get sharding codec configuration
