@@ -88,7 +88,7 @@ defmodule ExZarr.Telemetry do
   Chunk events include `:start`, `:stop`, and `:exception` variants from
   `:telemetry.span/3`. Stream events are single `:execute` calls.
   """
-  @spec events() :: [list(atom())]
+  @spec events() :: [[atom()]]
   def events do
     [
       @chunk_read ++ [:start],
