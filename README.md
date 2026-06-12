@@ -17,11 +17,11 @@ Elixir implementation of [Zarr](https://zarr.dev): compressed, chunked, N-dimens
 - **High Performance** - 26x faster multi-chunk reads with near-optimal scaling (see [Performance Guide](guides/performance.md))
 - **N-dimensional arrays** with support for 10 data types (int8-64, uint8-64, float32/64)
 - **BEAM-native streaming** - `stream_chunks/2`, `stream_slices/3`, and `write_stream/3` for bounded-memory processing
-- **Telemetry** — `:telemetry` events for chunk I/O and stream lifecycle (`ExZarr.Telemetry`)
+- **Telemetry** - `:telemetry` events for chunk I/O and stream lifecycle (`ExZarr.Telemetry`)
 - **Pipeline integrations** - Optional Flow, GenStage, and Broadway support for production pipelines
 - **Parallel chunk processing** - Automatic parallel I/O and decompression for large operations
 - **Chunking** along arbitrary dimensions for optimized I/O operations
-- **Compression** — Erlang `:zlib` plus Zig NIF codecs (zstd, lz4, snappy, blosc, bzip2, crc32c)
+- **Compression** - Erlang `:zlib` plus Zig NIF codecs (zstd, lz4, snappy, blosc, bzip2, crc32c)
 - **Flexible storage** backends (in-memory, filesystem, and zip archive)
 - **Custom storage backends** with plugin architecture for S3, databases, and more
 - **Hierarchical groups** for organizing multiple arrays
@@ -100,7 +100,7 @@ array
 |> Enum.each(fn {_start, row} -> process_row(row) end)
 ```
 
-Attach telemetry handlers for production observability — see [guides/telemetry.md](guides/telemetry.md).
+Attach telemetry handlers for production observability - see [guides/telemetry.md](guides/telemetry.md).
 
 ```elixir
 ExZarr.Array.write_stream(array, chunk_stream,
@@ -316,14 +316,14 @@ All data types use little-endian byte order by default, consistent with the Zarr
 
 ExZarr provides the following built-in compression options:
 
-- `**:none`** - No compression (fastest, largest size)
-- `**:zlib**` - Standard zlib compression (good balance of speed and compression)
-- `**:crc32c**` - CRC32C checksum codec (RFC 3720 compatible with Python zarr)
-- `**:zstd**` - Zstandard compression (Zig NIF implementation)
-- `**:lz4**` - LZ4 compression (Zig NIF implementation)
-- `**:snappy**` - Snappy compression (Zig NIF implementation)
-- `**:blosc**` - Blosc meta-compressor (Zig NIF implementation)
-- `**:bzip2**` - Bzip2 compression (Zig NIF implementation)
+- **`:none`** - No compression (fastest, largest size)
+- **`:zlib`** - Standard zlib compression (good balance of speed and compression)
+- **`:crc32`c** - CRC32C checksum codec (RFC 3720 compatible with Python zarr)
+- **`:zstd`** - Zstandard compression (Zig NIF implementation)
+- **`:lz4`** - LZ4 compression (Zig NIF implementation)
+- **`:snappy`** - Snappy compression (Zig NIF implementation)
+- **`:blosc`** - Blosc meta-compressor (Zig NIF implementation)
+- **`:bzip2`** - Bzip2 compression (Zig NIF implementation)
 
 The `:zlib` codec uses Erlang's built-in `:zlib` module for maximum reliability and compatibility.
 
@@ -398,9 +398,9 @@ For complete examples, see `examples/custom_codec_example.exs` which includes:
 
 ExZarr includes three built-in storage backends:
 
-- `**:memory`** - In-memory storage for temporary arrays (non-persistent, fast)
-- `**:filesystem**` - Local filesystem storage using Zarr v2 directory structure (persistent, interoperable)
-- `**:zip**` - Zip archive storage for compact single-file arrays (portable, easy to distribute)
+- **`:memory`** - In-memory storage for temporary arrays (non-persistent, fast)
+- **`:filesystem`** - Local filesystem storage using Zarr v2 directory structure (persistent, interoperable)
+- **`:zip`** - Zip archive storage for compact single-file arrays (portable, easy to distribute)
 
 Arrays stored on the filesystem use the standard Zarr format:
 
@@ -655,7 +655,7 @@ ExZarr uses:
 - **GenServer** for array state management
 - **Lazy streams** (`Stream.resource/3`, `Task.async_stream/3`) for bounded-memory chunk I/O
 - **Optional pipeline modules** (`ExZarr.Flow`, `ExZarr.GenStage`, `ExZarr.Broadway`) for backpressure and fault tolerance
-- `**:telemetry`** for chunk read/write and stream lifecycle events
+- **`:telemetry`** for chunk read/write and stream lifecycle events
 - **Pluggable storage backends** for memory, filesystem, zip, and cloud backends
 - **Zarr v2 and v3 specifications** for interoperability with Python, Julia, and other Zarr implementations
 - **Version-aware codec pipeline** that automatically routes between v2 and v3 implementations
@@ -867,19 +867,19 @@ Key modules:
 
 See [ROADMAP.md](ROADMAP.md) for the full release plan.
 
-**v1.1.0 (current)** — BEAM-native streaming: `stream_chunks/2`, `stream_slices/3`,
+**v1.1.0 (current)** - BEAM-native streaming: `stream_chunks/2`, `stream_slices/3`,
 `write_stream/3`, telemetry, Flow/GenStage/Broadway integrations, cloud patterns
 guide, and production cookbook.
 
 **Upcoming** (high level):
 
-- **v1.2.0**  **—Cloud storage & reliability**
+- **v1.2.0**  - **Cloud storage & reliability**
   Unified retry/backoff for S3/GCS/Azure, Azure SDK migration, v3 async store read alignment, cloud integration tests.
-- **v1.3.0** — **Data science interop**
+- **v1.3.0** - **Data science interop**
   Explorer streaming, Nx batch recipes from `stream_chunks`, livebook curriculum, cookbook expansion.
-- **v1.4.0** — **Performance & packaging**
+- **v1.4.0** - **Performance & packaging**
   Async codec pipeline (overlap I/O + decode), vendored/static codecs (drop apt/brew deps), PackBits/Categorize filters, sharding improvements.
-- **v2.0.0** — **Distributed processing**
+- **v2.0.0** - **Distributed processing**
   Horde/`:pg` multi-node chunk work, `PartitionSupervisor` pools, cross-node telemetry, distributed Broadway topologies.
 
 ## Contributing
