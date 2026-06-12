@@ -1,5 +1,10 @@
 defmodule ExZarr.Streaming do
-  @moduledoc false
+  @moduledoc """
+  Internal streaming helpers used by `ExZarr.Array` and pipeline producers.
+
+  This module is not part of the stable public API. Use
+  `ExZarr.Array.stream_chunks/2`, `stream_slices/3`, and `write_stream/3` instead.
+  """
 
   alias ExZarr.{Array, StreamError, Telemetry}
   alias ExZarr.ChunkGrid.{Irregular, Regular}

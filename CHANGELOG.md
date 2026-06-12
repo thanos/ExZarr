@@ -18,7 +18,7 @@ large-scale array processing on the BEAM.
 - `ExZarr.Array.stream_chunks/2` - lazy chunk streaming with concurrency, metadata, and filtering
 - `ExZarr.Array.stream_slices/3` - dimension-wise slice streaming
 - `ExZarr.Array.write_stream/3` - chunk ingestion from enumerables with validation and checkpoints
-- `ExZarr.Streaming` - shared streaming internals module
+- Shared streaming internals module (internal; not part of the public API)
 - `chunk_stream/2` retained as backward-compatible alias for `stream_chunks/2`
 
 #### Pipeline Integrations (Optional Dependencies)

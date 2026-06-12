@@ -77,7 +77,7 @@ lib/ex_zarr/
 
 ## Implementation Plan
 
-1. Extract streaming logic to `ExZarr.Streaming`
+1. Extract streaming logic into a shared internal module
 2. Add `stream_chunks`, `stream_slices`, `write_stream` to Array
 3. Add `ExZarr.Telemetry`
 4. Add optional Flow/GenStage/Broadway modules
