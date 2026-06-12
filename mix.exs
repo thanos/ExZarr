@@ -66,7 +66,7 @@ defmodule ExZarr.MixProject do
       {:jason, "~> 1.4"},
 
       # Zig NIFs for compression codecs
-      {:zigler, "~> 0.13", runtime: false},
+      {:zigler, "~> 0.16", runtime: false},
 
       # Cloud storage backends (optional)
       {:ex_aws, "~> 2.5", optional: true},
@@ -92,15 +92,16 @@ defmodule ExZarr.MixProject do
       {:broadway, "~> 1.0", optional: true},
 
       # Documentation
-      {:ex_doc, "~> 0.39", [env: :prod, hex: "ex_doc", repo: "hexpm", optional: false]},
-        {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-        {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-        {:excoveralls, "~> 0.18", only: :test},
-        {:stream_data, "~> 1.1", only: [:dev, :test]},
-        {:mox, "~> 1.1", only: :test},
-        {:benchee, "~> 1.3", only: :dev},
-        {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false, warn_if_outdated: true}
-      ]
+      # compile-only; zig_doc (via zigler) requires ex_doc when building NIFs
+      {:ex_doc, "~> 0.39", only: [:dev, :test, :prod], runtime: false, override: true},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:excoveralls, "~> 0.18", only: :test},
+      {:stream_data, "~> 1.1", only: [:dev, :test]},
+      {:mox, "~> 1.1", only: :test},
+      {:benchee, "~> 1.3", only: :dev},
+      {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false, warn_if_outdated: true}
+    ]
   end
 
   defp description do
@@ -167,6 +168,23 @@ defmodule ExZarr.MixProject do
 
         # Contributing
         "guides/contributing.md",
+        "guides/telemetry.md",
+        "migration_guide_v1_1_0.md",
+        "release_notes_v1_1_0.md",
+        "ROADMAP.md",
+        "docs/architecture_review.md",
+        "docs/gap_analysis.md",
+        "docs/v1_1_design.md",
+        "docs/cloud_storage_patterns.md",
+        "docs/cookbook/README.md",
+        "docs/cookbook/100gb_arrays.md",
+        "docs/cookbook/1tb_arrays.md",
+        "docs/cookbook/image_archives.md",
+        "docs/cookbook/ml_pipelines.md",
+        "docs/cookbook/geospatial.md",
+        "docs/cookbook/scientific_computing.md",
+        "docs/cookbook/distributed.md",
+        "docs/educational/v1_1_streaming_guide.md",
 
         # Additional Documentation
         "CHANGELOG.md",
@@ -203,6 +221,24 @@ defmodule ExZarr.MixProject do
         ],
         Contributing: [
           "guides/contributing.md"
+        ],
+        "v1.1 Streaming": [
+          "migration_guide_v1_1_0.md",
+          "release_notes_v1_1_0.md",
+          "docs/v1_1_design.md",
+          "docs/cloud_storage_patterns.md",
+          "docs/educational/v1_1_streaming_guide.md",
+          "guides/telemetry.md"
+        ],
+        Cookbook: [
+          "docs/cookbook/README.md",
+          "docs/cookbook/100gb_arrays.md",
+          "docs/cookbook/1tb_arrays.md",
+          "docs/cookbook/image_archives.md",
+          "docs/cookbook/ml_pipelines.md",
+          "docs/cookbook/geospatial.md",
+          "docs/cookbook/scientific_computing.md",
+          "docs/cookbook/distributed.md"
         ],
         "Additional Documentation": [
           "CHANGELOG.md",

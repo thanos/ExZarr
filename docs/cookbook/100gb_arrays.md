@@ -17,7 +17,7 @@ Use `stream_chunks/2` with bounded concurrency:
   |> ExZarr.Array.stream_chunks(concurrency: 8, ordered: false)
   |> Enum.reduce({0, 0}, fn {_index, data}, {acc_sum, acc_count} ->
     chunk_sum =
-      for(<<val::float-little-64 <- data>>, reduce: 0, do: acc + val)
+      for(<<val::float-little-64 <- data>>, reduce: 0, acc -> acc + val)
 
     {acc_sum + chunk_sum, acc_count + div(byte_size(data), 8)}
   end)

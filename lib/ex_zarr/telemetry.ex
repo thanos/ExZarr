@@ -6,12 +6,16 @@ defmodule ExZarr.Telemetry do
   operations. Attach handlers to monitor throughput, latency, and errors
   in production.
 
+  Chunk read and write use `:telemetry.span/3`, which emits `:start`, `:stop`,
+  and `:exception` suffixed events. Attach to the `:stop` events for duration
+  measurements.
+
   ## Events
 
   | Event | Measurements | Metadata |
   |-------|-------------|----------|
-  | `[:ex_zarr, :chunk, :read]` | `%{duration: native_time}` | `%{array: ref, chunk_index: tuple}` |
-  | `[:ex_zarr, :chunk, :write]` | `%{duration: native_time, bytes: integer}` | `%{array: ref, chunk_index: tuple}` |
+  | `[:ex_zarr, :chunk, :read, :stop]` | `%{duration: native_time}` | `%{array: ref, chunk_index: tuple}` |
+  | `[:ex_zarr, :chunk, :write, :stop]` | `%{duration: native_time, bytes: integer}` | `%{array: ref, chunk_index: tuple}` |
   | `[:ex_zarr, :stream, :start]` | `%{}` | `%{array: ref, type: atom, opts: keyword}` |
   | `[:ex_zarr, :stream, :stop]` | `%{duration: native_time, count: integer}` | `%{array: ref, type: atom}` |
 
@@ -19,7 +23,7 @@ defmodule ExZarr.Telemetry do
 
       :telemetry.attach(
         "ex-zarr-chunk-reads",
-        [:ex_zarr, :chunk, :read],
+        [:ex_zarr, :chunk, :read, :stop],
         fn _event, measurements, metadata, _config ->
           IO.inspect({measurements.duration, metadata.chunk_index})
         end,
@@ -79,10 +83,22 @@ defmodule ExZarr.Telemetry do
   end
 
   @doc """
-  Returns the list of all ExZarr telemetry event names.
+  Returns telemetry event names for attaching handlers.
+
+  Chunk events include `:start`, `:stop`, and `:exception` variants from
+  `:telemetry.span/3`. Stream events are single `:execute` calls.
   """
   @spec events() :: [list(atom())]
   def events do
-    [@chunk_read, @chunk_write, @stream_start, @stream_stop]
+    [
+      @chunk_read ++ [:start],
+      @chunk_read ++ [:stop],
+      @chunk_read ++ [:exception],
+      @chunk_write ++ [:start],
+      @chunk_write ++ [:stop],
+      @chunk_write ++ [:exception],
+      @stream_start,
+      @stream_stop
+    ]
   end
 end

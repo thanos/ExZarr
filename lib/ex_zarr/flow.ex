@@ -19,15 +19,15 @@ if Code.ensure_loaded?(Flow) do
         |> Enum.to_list()
 
         array
-        |> ExZarr.Flow.chunk_flow(concurrency: 8, ordered: false)
+        |> ExZarr.Flow.chunk_flow(stages: 8, ordered: false)
         |> Flow.filter(fn {_index, data} -> byte_size(data) > 0 end)
         |> Enum.sum()
 
     ## Partitioning
 
     Flow uses `Flow.from_enumerable/2` with `stages: schedulers` by default.
-    Each stage pulls chunks from the underlying `stream_chunks/2` enumerable.
-    Backpressure propagates from downstream operators to limit in-flight chunks.
+    Chunk reads use `concurrency: 1` because Flow stages provide parallelism.
+    Tune throughput with `:stages`, not `:concurrency`.
     """
 
     alias ExZarr.Array
@@ -35,12 +35,11 @@ if Code.ensure_loaded?(Flow) do
     @doc """
     Creates a Flow from an array's chunks.
 
-    All options are forwarded to `ExZarr.Array.stream_chunks/2`.
-
     ## Options
 
       * `:stages` - Number of Flow stages (default: `System.schedulers_online/0`)
-      * All `stream_chunks/2` options (`:concurrency`, `:ordered`, `:metadata`, etc.)
+      * Other `stream_chunks/2` options (`:ordered`, `:metadata`, `:filter`, etc.)
+        except `:concurrency`, which is fixed at 1 for Flow pipelines
 
     ## Examples
 
@@ -64,10 +63,12 @@ if Code.ensure_loaded?(Flow) do
     @doc """
     Creates a Flow from array slices along a dimension.
 
+    Chunk reads use `concurrency: 1`; tune parallelism with `:stages`.
+
     ## Examples
 
         array
-        |> ExZarr.Flow.slice_flow(0, concurrency: 4)
+        |> ExZarr.Flow.slice_flow(0, stages: 4)
         |> Flow.map(fn {_start, data} -> byte_size(data) end)
         |> Enum.to_list()
     """

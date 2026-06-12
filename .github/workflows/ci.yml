@@ -49,7 +49,7 @@ jobs:
       - name: Install Zig
         uses: goto-bus-stop/setup-zig@v2
         with:
-          version: 0.15.2
+          version: 0.16.0
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -79,6 +79,9 @@ jobs:
 
       - name: Install dependencies
         run: mix deps.get
+
+      - name: Install Zig toolchain for zigler
+        run: mix zig.get
 
       - name: Compile dependencies
         run: mix deps.compile
@@ -122,7 +125,7 @@ jobs:
       - name: Install Zig
         uses: goto-bus-stop/setup-zig@v2
         with:
-          version: 0.15.2
+          version: 0.16.0
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -145,6 +148,9 @@ jobs:
 
       - name: Install dependencies
         run: mix deps.get
+
+      - name: Install Zig toolchain for zigler
+        run: mix zig.get
 
       - name: Compile dependencies
         run: mix deps.compile
@@ -183,7 +189,7 @@ jobs:
       - name: Install Zig
         uses: goto-bus-stop/setup-zig@v2
         with:
-          version: 0.15.2
+          version: 0.16.0
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -206,6 +212,9 @@ jobs:
 
       - name: Install dependencies
         run: mix deps.get
+
+      - name: Install Zig toolchain for zigler
+        run: mix zig.get
 
       - name: Compile dependencies
         run: mix deps.compile

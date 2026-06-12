@@ -40,7 +40,6 @@
 
 ## Opportunities
 
-- Position ExZarr as the BEAM-native alternative to Dask+Zarr for Elixir/Phoenix
-  data pipelines
+- Elixir/Phoenix data pipelines that need Zarr streaming without leaving the BEAM
 - Livebook-first education for scientific Elixir community
 - Cloud-native deployments on Fly.io/Gigalixir with Broadway pipelines

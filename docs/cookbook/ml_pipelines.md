@@ -8,7 +8,7 @@
 batches =
   array
   |> ExZarr.Array.stream_chunks(concurrency: 4)
-  |> Stream.map(fn {_index, data} -> Nx.tensor(data, type: :f32) end)
+  |> Stream.map(fn {_index, data} -> Nx.from_binary(data, {:f, 32}) end)
   |> Stream.chunk_every(32)
   |> Enum.to_list()
 ```
@@ -42,7 +42,7 @@ defmodule MyApp.TrainingPipeline do
 
   @impl Broadway
   def handle_message(_processor, %{data: {_index, data}} = message, _ctx) do
-    tensor = Nx.tensor(data, type: :f32) |> normalize()
+    tensor = Nx.from_binary(data, {:f, 32}) |> normalize()
     Broadway.Message.put_data(message, tensor)
   end
 end
