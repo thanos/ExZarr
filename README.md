@@ -1,11 +1,11 @@
 # ExZarr
 
-[Hex.pm](https://hex.pm/packages/ex_zarr)
-[Hex Docs](https://hexdocs.pm/ex_zarr)
-[Hex.pm Downloads](https://hex.pm/packages/ex_zarr)
-[License](https://github.com/thanos/ExZarr/blob/main/LICENSE)
-[Build Status](https://github.com/thanos/ExZarr/actions)
-[Coverage Status](https://coveralls.io/github/thanos/ExZarr?branch=main)
+
+[![Hex version](https://img.shields.io/hexpm/v/ex_zarr.svg)](https://hex.pm/packages/ex_zarr)
+[![Hex docs](https://img.shields.io/badge/docs-hexdocs.pm-blue)](https://hexdocs.pm/ex_zarr)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/thanos/ex_zarr/actions/workflows/ci.yml/badge.svg)](https://github.com/thanos/ex_zarr/actions/workflows/ci.yml) [![Coverage Status](https://coveralls.io/repos/github/thanos/ex_zarr/badge.svg?branch=main)](https://coveralls.io/github/thanos/ex_zarr?branch=main)
+
 
 Elixir implementation of [Zarr](https://zarr.dev): compressed, chunked, N-dimensional arrays designed for parallel computing and scientific data storage.
 
